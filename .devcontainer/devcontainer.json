@@ -1,0 +1,45 @@
+{
+    "name": "Rust NN DevContainer",
+    // this is necessary to make ADB work on linux
+    // the WSL setup, if any, may be done elsewhere
+    "runArgs": ["--network=host"],
+    "build": {
+      "dockerfile": "Dockerfile",
+      "context": "..",
+      "args": {
+        // hack: this is default first user of machine - docker linux just proxies GID/UID of files, no translation like on mac os
+        "UID": "1000",
+        "GID": "1000"
+      }
+    },
+    "features": {
+      "ghcr.io/devcontainers/features/rust": {
+        "version": "1.81.0",
+        "targets": ["x86_64-unknown-linux-gnu"]
+      }
+    },
+    "customizations": {
+      "vscode": {
+        "settings": {
+          "terminal.integrated.shell.linux": "/bin/bash"
+        },
+        "extensions": [
+          "dbaeumer.vscode-eslint",
+          "esbenp.prettier-vscode",
+          "msjsdiag.vscode-react-native",
+          "Gruntfuggly.todo-tree"
+        ]
+      }
+    },
+    // exports don't work
+    "postCreateCommand": ".devcontainer/post_create.sh",
+    "postStartCommand": ".devcontainer/post_start.sh",
+    "remoteUser": "root",
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "${localEnv:HOME}/.ssh",
+        "target": "/root/.ssh"
+      }
+    ]
+  }
