@@ -5,16 +5,11 @@
     "runArgs": ["--network=host"],
     "build": {
       "dockerfile": "Dockerfile",
-      "context": "..",
-      "args": {
-        // hack: this is default first user of machine - docker linux just proxies GID/UID of files, no translation like on mac os
-        "UID": "1000",
-        "GID": "1000"
-      }
+      "context": ".."
     },
     "features": {
       "ghcr.io/devcontainers/features/rust": {
-        "version": "1.81.0",
+        "version": "nightly-2025-03-13",
         "targets": ["x86_64-unknown-linux-gnu"]
       }
     },
@@ -24,22 +19,18 @@
           "terminal.integrated.shell.linux": "/bin/bash"
         },
         "extensions": [
-          "dbaeumer.vscode-eslint",
-          "esbenp.prettier-vscode",
-          "msjsdiag.vscode-react-native",
+          // "dbaeumer.vscode-eslint",
+          // "esbenp.prettier-vscode",
           "Gruntfuggly.todo-tree"
         ]
       }
     },
-    // exports don't work
-    "postCreateCommand": ".devcontainer/post_create.sh",
-    "postStartCommand": ".devcontainer/post_start.sh",
-    "remoteUser": "root",
+    "remoteUser": "vscode",
     "mounts": [
       {
         "type": "bind",
         "source": "${localEnv:HOME}/.ssh",
-        "target": "/root/.ssh"
+        "target": "/home/vscode/.ssh"
       }
     ]
   }
