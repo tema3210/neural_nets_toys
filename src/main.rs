@@ -15,12 +15,12 @@ fn main() {
         -1.0..1.0,
         )
     .chain(
-        lnn_exp::LNNLayer::<5,3,3>::random(
+        layers::lnn_exp_layer::LNNLayer::<5,3,3>::random(
             sigmoid,
             -1.0..1.0,
         ).with_derivative(sigmoid_derivative)
     )
-    .chain(fc_layer::Layer::<3,1>::random(
+    .chain(layers::fc_layer::Layer::<3,1>::random(
         sigmoid,
         -1.0..1.0,
     ).with_derivative(sigmoid_derivative));
