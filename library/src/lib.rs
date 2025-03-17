@@ -61,7 +61,7 @@ impl<F,S, const I: usize,const M: usize, const O: usize> NeuralNetwork<I,O> for 
     }
 }
 
-pub trait NeuralNetwork<const INP: usize, const OUT: usize> 
+pub trait NeuralNetwork<const INP: usize, const OUT: usize>: Sized + Send + Sync
     where [(); INP]:, [(); OUT]:
 {   
     fn forward(&mut self, x: &[f64; INP], helper: Option<&mut impl Helper>) -> [f64; OUT];
@@ -86,6 +86,7 @@ pub struct TrainParams<const O: usize> {
     pub epochs: usize,
     pub temperature: f64,
     pub cutoff: f64,
+    /// Loss function for supervised learning
     pub fn_loss: fn(&[f64; O], &[f64; O]) -> [f64;O],
 }
 

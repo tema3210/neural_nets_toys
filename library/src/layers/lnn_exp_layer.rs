@@ -112,7 +112,7 @@ impl<const I: usize, const O: usize, const D: usize> NeuralNetwork<I, O> for LNN
     
     fn backward(&mut self, helper_ref: &mut impl Helper, errors: [f64; O], temperature: f64) -> [f64; I] {
         let helper = helper_ref.pop().expect("Expected input to be pushed to helper");
-        let sample: &[f64; I] = helper.as_array().expect("Expected array right size");
+        let sample: &[f64; I] = helper.as_array().expect("Expected array of right size");
 
         // let sample = self.preprocess(x);
         let predict = self.forward(&sample,Some(helper_ref));

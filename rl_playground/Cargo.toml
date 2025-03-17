@@ -1,0 +1,18 @@
+[package]
+name = "rl_playground"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.15",  default-features = false,  features = [
+  # "dynamic_linking", 
+  "bevy_winit",        # Window management
+  "bevy_core_pipeline",# Required for rendering
+  "bevy_render",       # Rendering
+  "bevy_pbr",          # 3D materials
+  "png",               # Only needed image format
+  "wayland",           # Wayland support (remove if not on Linux)
+
+] }
+rand = "0.8"
+neural_nets_toys = { path = "../library" }  # Your neural network library

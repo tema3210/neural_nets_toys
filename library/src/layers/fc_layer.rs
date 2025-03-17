@@ -1,13 +1,20 @@
-use std::sync::Arc;
-
 use crate::*;
 
 pub struct Layer<const INP: usize, const WIDTH: usize> {
     weights: [[f64; INP]; WIDTH],
     bias: [f64; WIDTH],
     activate: fn(f64) -> f64,
-    activate_derivative: Option<Arc<dyn Fn(f64) -> f64>>,
-}    
+    activate_derivative: Option<fn(f64) -> f64>,
+}
+
+impl<const I: usize, const W: usize> std::fmt::Debug for Layer<I, W> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Layer")
+            .field("weights", &self.weights)
+            .field("bias", &self.bias)
+            .finish()
+    }
+}
 
 impl<const I: usize, const W: usize> Layer<I, W> {
     pub fn derivative(&self, x: f64) -> f64 {
@@ -18,8 +25,8 @@ impl<const I: usize, const W: usize> Layer<I, W> {
         ((self.activate)(x + step) - (self.activate)(x - step)) / (2.0 * step)
     }
 
-    pub fn with_derivative(mut self, derivative: impl Fn(f64) -> f64 + 'static) -> Self {
-        self.activate_derivative = Some(Arc::new(derivative));
+    pub fn with_derivative(mut self, derivative: fn(f64) -> f64) -> Self {
+        self.activate_derivative = Some(derivative);
         self
     }
 
