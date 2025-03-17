@@ -11,19 +11,21 @@ fn main() {
         v * (1.0 - v)
     }
 
-    let mut model = attention::Attention::<5,2>::random(
+    let mut model = layers::attention_layer::Attention::<5,2>::random(
         -1.0..1.0,
         )
     .chain(
-        layers::lnn_exp_layer::LNNLayer::<5,3,3>::random(
+        layers::lnn_exp_layer::LNNLayer::<5,1,3>::random(
             sigmoid,
             -1.0..1.0,
+            0.7
         ).with_derivative(sigmoid_derivative)
     )
-    .chain(layers::fc_layer::Layer::<3,1>::random(
-        sigmoid,
-        -1.0..1.0,
-    ).with_derivative(sigmoid_derivative));
+    // .chain(layers::fc_layer::Layer::<3,1>::random(
+    //     sigmoid,
+    //     -1.0..1.0,
+    // ).with_derivative(sigmoid_derivative))
+    ;
 
 
     let data = [
@@ -67,7 +69,7 @@ fn main() {
     });
 
     for (x,_) in data.iter() {
-        let y = model.forward(x);
+        let y = model.forward(x, None::<&mut DefaultHelper>);
         println!("{:?} -> {:?}", x, y);
     }
 

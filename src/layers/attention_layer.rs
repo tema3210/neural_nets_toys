@@ -1,4 +1,4 @@
-use crate::NeuralNetwork;
+use crate::{Helper, NeuralNetwork};
 use rand::Rng;
 use std::ops::Range;
 
@@ -23,7 +23,7 @@ pub struct Attention<const I: usize, const M: usize> {
 }
 
 impl<const I: usize, const M: usize> Attention<I, M> {
-    pub fn random(value_range: Range<f64>) -> Self {
+    pub fn random(value_range: Range<f64>) -> impl NeuralNetwork<I, I> {
         let mut rng = rand::rng();
         
         Attention {
@@ -89,8 +89,14 @@ impl<const I: usize, const M: usize> Attention<I, M> {
 }
 
 impl<const I: usize, const M: usize> NeuralNetwork<I, I> for Attention<I, M> {
-    fn forward(&mut self, x: &[f64; I]) -> [f64; I] {
-        self.preprocess(x)
+    fn forward(&mut self, x: &[f64; I], h: Option<&mut impl Helper>) -> [f64; I] {
+        let ret = self.preprocess(x);
+
+        if let Some(h) = h {
+            h.push(x);
+        }
+
+        ret
     }
     
     fn preprocess(&mut self, x: &[f64; I]) -> [f64; I] {
@@ -161,7 +167,16 @@ impl<const I: usize, const M: usize> NeuralNetwork<I, I> for Attention<I, M> {
         result
     }
     
-    fn backward(&mut self, x: &[f64; I], errors: [f64; I], temperature: f64) -> [f64; I] {
+    fn backward(&mut self, helper: &mut impl Helper, errors: [f64; I], temperature: f64) -> [f64; I] {
+
+        let helper = helper
+          .pop()
+          .expect("Expected input to be pushed to helper");
+
+        let x: &[f64; I] = helper
+          .as_array()
+          .expect("Expected array of right size");
+
         // Simplified backpropagation for attention mechanism
         let mut input_grads = [0.0; I];
         

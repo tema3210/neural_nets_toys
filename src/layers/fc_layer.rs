@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use crate::*;
 
 pub struct Layer<const INP: usize, const WIDTH: usize> {
     weights: [[f64; INP]; WIDTH],
     bias: [f64; WIDTH],
     activate: fn(f64) -> f64,
-    activate_derivative: Option<Box<dyn Fn(f64) -> f64>>,
+    activate_derivative: Option<Arc<dyn Fn(f64) -> f64>>,
 }    
 
 impl<const I: usize, const W: usize> Layer<I, W> {
@@ -17,7 +19,7 @@ impl<const I: usize, const W: usize> Layer<I, W> {
     }
 
     pub fn with_derivative(mut self, derivative: impl Fn(f64) -> f64 + 'static) -> Self {
-        self.activate_derivative = Some(Box::new(derivative));
+        self.activate_derivative = Some(Arc::new(derivative));
         self
     }
 
@@ -35,7 +37,12 @@ impl<const I: usize, const W: usize> Layer<I, W> {
 }
 
 impl<const I: usize, const W: usize> NeuralNetwork<I, W> for Layer<I, W> {
-    fn forward(&mut self, x: &[f64; I]) -> [f64; W] {
+    fn forward(&mut self, x: &[f64; I], helper: Option<&mut impl Helper>) -> [f64; W] {
+        // Push the input to the helper for use in backpropagation
+        if let Some(h) = helper {
+            h.push(x);
+        }
+        
         let mut sum = self.bias;
 
         self.weights.iter().enumerate().for_each(|(ind, coefs)| {
@@ -48,12 +55,16 @@ impl<const I: usize, const W: usize> NeuralNetwork<I, W> for Layer<I, W> {
         sum
     }
 
-    fn backward(&mut self, x: &[f64; I], error: [f64; W], temperature: f64) -> [f64; I] {
-        let y = self.forward(x);
+    fn backward(&mut self, helper: &mut impl Helper, error: [f64; W], temperature: f64) -> [f64; I] {
+
+        let helper = helper.pop().expect("Expected input to be pushed to helper");
+        let x: &[f64; I] = helper.as_array().expect("Expected array right size");
+
+        let predict = self.forward(x, None::<&mut DefaultHelper>);
         let mut correction = [0.0; I];
 
         for neuron in 0..W {
-            let delta = error[neuron] * self.derivative(y[neuron]);
+            let delta = error[neuron] * self.derivative(predict[neuron]);
             for input_no in 0..I {
                 correction[input_no] += delta * self.weights[neuron][input_no];
                 self.weights[neuron][input_no] += temperature * delta * x[input_no];
