@@ -12,7 +12,7 @@ bevy = { version = "0.15",  default-features = false,  features = [
   "bevy_pbr",          # 3D materials
   "png",               # Only needed image format
   "wayland",           # Wayland support (remove if not on Linux)
-
+  "bevy_ui"
 ] }
 rand = "0.8"
 neural_nets_toys = { path = "../library" }  # Your neural network library

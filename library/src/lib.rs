@@ -173,3 +173,4 @@ pub fn train<const I: usize, const O: usize>(
 ) -> usize {
     DefaultHelper::train(model, data, params)
 }
+
