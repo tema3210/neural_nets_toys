@@ -59,6 +59,11 @@ impl<F,S, const I: usize,const M: usize, const O: usize> NeuralNetwork<I,O> for 
         let errors = self.second.backward(helper, errors, temperature);
         self.first.backward(helper, errors, temperature)
     }
+
+    fn reset(&mut self) {
+        self.first.reset();
+        self.second.reset();
+    }
 }
 
 pub trait NeuralNetwork<const INP: usize, const OUT: usize>: Sized + Send + Sync
@@ -75,6 +80,9 @@ pub trait NeuralNetwork<const INP: usize, const OUT: usize>: Sized + Send + Sync
     fn chain<const SZ: usize>(self, other: impl NeuralNetwork<OUT, SZ>) -> impl NeuralNetwork<INP, SZ> where Self: Sized {
         Chain { first: self, second: other }
     }
+    /// Reset all dynamic state
+    fn reset(&mut self);
+
     // fn concat<const RSZ: usize>(self,other: impl NeuralNetwork<INP,RSZ>) -> impl NeuralNetwork<INP, {OUT + RSZ}> 
     //     where Self: Sized, [();OUT + RSZ]:
     // {
@@ -129,7 +137,11 @@ impl Helper for DefaultHelper {
 
 impl<const I: usize, const O: usize> NNExt<I, O> for DefaultHelper {
 
-    fn train(model: &mut impl NeuralNetwork<I, O>, data: &[([f64; I], [f64; O])], params: TrainParams<O>) -> usize {
+    fn train(
+        model: &mut impl NeuralNetwork<I, O>,
+        data: &[([f64; I], [f64; O])],
+        params: TrainParams<O>
+    ) -> usize {
         let mut helper = Self::with_capacity(data.len());
 
         for cnt in 0..params.epochs {

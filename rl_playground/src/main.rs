@@ -2,10 +2,11 @@
 use std::collections::VecDeque;
 use std::ops::Range;
 
-use agent::{Agent, INPUT_PARAMS};
+use agent::{Agent, INPUT_PARAMS, OUTPUT_PARAMS};
+use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemId;
 use bevy::prelude::*;
-use bevy::math::primitives::Capsule3d;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use neural_nets_toys::{train, TrainParams};
 
 mod agent;
@@ -89,21 +90,26 @@ mod app_ui {
 
 fn setup_environment(
     tr_sys: Res<UtilSystems>,
-    config: Res<EnvironmentConfig>,
+    _config: Res<EnvironmentConfig>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let plane_z_level = -0.5;
 
     let agent_start = Transform::from_xyz(0.0, 0.0, plane_z_level);
 
-    let camera_distance = 6.0;
+    let camera_distance = 80.0;
 
     // Spawn agent
     commands.spawn((
-        Agent::new(),
-        Mesh3d(meshes.add(Capsule3d::default().mesh())),
+        Agent::new("John".to_string(),_config.sight_distance),
+        Mesh3d(meshes.add(Cuboid::new(
+            agent::AGENT_SIZE,
+            agent::AGENT_SIZE,
+            agent::AGENT_SIZE
+        ).mesh())),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.0, 0.5, 0.5),
             ..default()
@@ -115,13 +121,89 @@ fn setup_environment(
     ));
 
     // Spawn plane
+    let texture = {
+        let texture_size = 256u32;
+        let mut texture_data = vec![0; (texture_size * texture_size * 4) as usize];
+        
+        // Generate pavement pattern
+        for y in 0..texture_size {
+            for x in 0..texture_size {
+                let idx = ((y * texture_size + x) * 4) as usize;
+                
+                // Create tile grid pattern
+                let tile_size = 32;
+                let tile_x = x / tile_size;
+                let tile_y = y / tile_size;
+                
+                // Grid lines
+                let is_grid_line = x % tile_size <= 1 || y % tile_size <= 1;
+                
+                // Alternate tile colors
+                let is_dark_tile = (tile_x + tile_y) % 2 == 0;
+                
+                // Add some noise for texture
+                let noise = ((x * y) % 13) as u8;
+                
+                // Base color values
+                let (r, g, b) = if is_grid_line {
+                    (50, 50, 50) // Dark grid lines
+                } else if is_dark_tile {
+                    (140 + (noise % 20), 140 + (noise % 10), 140 + (noise % 15)) // Dark gray tile
+                } else {
+                    (180 + (noise % 15), 180 + (noise % 20), 180 + (noise % 10)) // Light gray tile
+                };
+                
+                // Set RGBA values
+                texture_data[idx] = r;
+                texture_data[idx + 1] = g;
+                texture_data[idx + 2] = b;
+                texture_data[idx + 3] = 255; // Full opacity
+            }
+        }
+        
+        // Create the texture asset
+        let pavement_texture = Image::new(
+            Extent3d {
+                width: texture_size,
+                height: texture_size,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            texture_data,
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::MAIN_WORLD,
+        );
+
+        pavement_texture
+    };
+
+    // Add the texture to assets
+    let texture_handle = images.add(texture);
+
+    // Create the material with the texture
+    let pavement_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(texture_handle),
+        perceptual_roughness: 0.9,
+        metallic: 0.01,
+        unlit: true,
+        ..default()
+    });
+
+    let plane_transform = Transform::from_xyz(0.0, 0.0, plane_z_level);
+
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d::new(Vec3::Z, Vec2::new(config.width, config.height)).mesh())),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::linear_rgba(0.5, 0.5, 0.5, 0.9),
+        Mesh3d(meshes.add(Plane3d::new(Vec3::Z, Vec2::new(_config.width, _config.height)).mesh())),
+        MeshMaterial3d(pavement_material),
+        plane_transform
+    )).with_child((
+        DirectionalLight {
+            illuminance: 10000.0,
+            // range: 100.0,
             ..default()
-        })),
-        Transform::from_xyz(0.0, 0.0, plane_z_level)
+        },
+        Transform::from_xyz(0.0, 0.0, 100.0)
+            .looking_at(plane_transform.translation, Vec3::Z),
     ));
 
     commands.run_system(tr_sys.new_round);
@@ -137,14 +219,14 @@ impl Plugin for RLPlugin {
     fn build(&self, app: &mut App) {
         app
             .insert_resource(EnvironmentConfig {
-                width: 300.0,
-                height: 300.0,
+                width: 100.0,
+                height: 100.0,
                 obstacle_count: 10..14,
-                reward_count: 3..6,
+                reward_count: 30..45,
                 reward_fuel_bonus: 8.0,
-                sleep_interval: 30,
-                fuel_cost_modifier: 1.0,
-                sight_distance: 5.0,
+                retries_per_round: 3,
+                fuel_cost_modifier: 2.0,
+                sight_distance: 16.6,
                 max_episodes: 100,
             })
             .insert_resource(TrainingState::default())
@@ -179,9 +261,7 @@ pub struct EnvironmentConfig {
     pub height: f32,
     pub obstacle_count: Range<usize>,
     pub reward_count: Range<usize>,
-
-    /// retries per round
-    pub sleep_interval: usize,
+    pub retries_per_round: usize,
 
     pub fuel_cost_modifier: f32,
     pub reward_fuel_bonus: f32,
@@ -203,7 +283,7 @@ pub enum Event {
     // Agent took an action (state, action chosen)
     Action {
         state: [f64; INPUT_PARAMS],
-        action: [f64; 4]
+        action: [f64; OUTPUT_PARAMS]
     },
     // Agent received reward
     Reward,
@@ -216,7 +296,7 @@ pub enum Event {
     },
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum EndReason {
     OutOfFuel,
     OutOfBounds,
@@ -251,13 +331,17 @@ fn training_system(
     mut round_end_reader: EventReader<EndRoundEvent>,
 ) {
 
-    println!("Training system {}", training_state.round);
+    println!("Training system {}", training_state.round + 1);
 
-    if round_end_reader.read().next().is_none() {
-        // if the round has not ended skip training
-        // println!("Round has not ended");
-        return;
+    match round_end_reader.read().next() {
+        Some(ev) => {
+            println!("Round ended: {:?}", ev.reason);
+        },
+        None => {
+            return;
+        }
     }
+
     *retry_count += 1;
     // Reset agent position and state
     for (mut agent, mut transform) in agents.iter_mut() {
@@ -267,13 +351,12 @@ fn training_system(
         agent.reset();
     }
 
-    if *retry_count > env_config.sleep_interval {
+    if *retry_count > env_config.retries_per_round {
         *retry_count = 0;
         println!("Resetting simulation");
         commands.run_system(tr_sys.new_round);
         return;
     }
-    
     
     //this one is assumed to be singular
     for (mut agent,_) in agents.iter_mut() {
@@ -281,11 +364,11 @@ fn training_system(
         // Extract all experiences from current episode and history
         let get_exprt_iter = || {
             let TrainingState { 
-                episode_histories, 
+                // episode_histories, 
                 current_episode, .. 
             } = &*training_state;
             current_episode.iter()
-                .chain(episode_histories.iter().flat_map(|x| x.iter()))   
+                // .chain(episode_histories.iter().flat_map(|x| x.iter()))
         };
 
         let agent_state = agent.encode();
@@ -316,8 +399,8 @@ fn training_system(
                 match (min_lower, max_greater) {
                     (Some((l_at,l_rew)), Some((r_at,r_rew))) => {
                         
-                        let l = l_rew / ((at - l_at).abs() + 0.0001);
-                        let r = r_rew / ((r_at - at).abs() + 0.0001);
+                        let l = l_rew / ((at - l_at).abs() + 0.01);
+                        let r = r_rew / ((r_at - at).abs() + 0.01);
                         // Geometrical mean
                         (l * r).sqrt().tanh()
                     },
@@ -330,13 +413,16 @@ fn training_system(
 
         let training_data= get_exprt_iter()
             .filter_map(|x| {
-                let base_reward = reward_at_timestamp(x.timestamp);
+
+                // Calculate reward
+                let base_reward = reward_at_timestamp(x.timestamp) - 0.5;
+
                 let fuel_eff = x.fuel / 100.0; // fuel expended, %
 
                 let (state,action) = match &x.event {
                     Event::Action { state, action } => (state, action),
                     Event::End { reason, rewards_collected } => {
-                        let action = [0.0; 4]; // at the end we don't move
+                        let action = [0.0; OUTPUT_PARAMS]; // at the end we don't move
                         let state = agent_state; // state at the end is the same as the last state
                         let reward = match reason {
                             EndReason::OutOfBounds => -1.0,
@@ -364,16 +450,18 @@ fn training_system(
             ),|(mut data,min,max),(state,action,reward,at)| {
 
                 // 0, 1 -> left, right; 2, 3 -> up, down
-                let mut new_action =  [0.0;4]; 
+                let mut new_action =  [0.0;OUTPUT_PARAMS]; 
                 // Scale action by reward
-                for i in 0..4 {
+                for i in 0..OUTPUT_PARAMS {
                     new_action[i] = action[i] as f64 * reward.abs();
                 }
 
                 // inverse target movement if reward is negative
-                if reward < 0.0001 {
+                if reward < 0.005 {
                     new_action.swap(0, 1);
                     new_action.swap(2, 3);
+                    // new_action[0] = -new_action[0];
+                    // new_action[1] = -new_action[1];
                 }
                 
                 data.push((state,new_action));
@@ -384,20 +472,26 @@ fn training_system(
                 )
             });
         
-        let temperature = training_data.0.len() as f64 * (training_data.2 - training_data.1 / training_data.2);
+        // let temperature = training_data.0.len() as f64 * (training_data.2 - training_data.1 ) / training_data.2;
+        let temperature = 0.5;
     
         let train_params = TrainParams {
-            epochs: 1,
+            epochs: 200,
             temperature,
             cutoff: 0.0001,
             fn_loss: |t, p| {
-                let tx = t[0] - t[1];
-                let ty = t[2] - t[3];
-                let px = p[0] - p[1];
-                let py = p[2] - p[3];
-                let tv = Vec2::new(tx as f32, ty as f32);
-                let pv = Vec2::new(px as f32, py as f32);
-                let loss = tv.dot(pv).sqrt() as f64;
+                // let tx = t[0] - t[1];
+                // let ty = t[2] - t[3];
+                // let px = p[0] - p[1];
+                // let py = p[2] - p[3];
+                // let tv = Vec2::new(tx as f32, ty as f32);
+                // let pv = Vec2::new(px as f32, py as f32);
+                let loss = (
+                    (t[0] - p[0]).powi(2) +
+                    (t[1] - p[1]).powi(2) +
+                    (t[2] - p[2]).powi(2) +
+                    (t[3] - p[3]).powi(2)
+                ).sqrt();
                 [
                     (t[0] - p[0]) * loss,
                     (t[1] - p[1]) * loss,
@@ -411,6 +505,10 @@ fn training_system(
         println!("Training agent with {} samples", training_data.0.len());
         train(&mut agent.brain.network, &training_data.0, train_params);
     }
+    // Clear current episode
+    let episode = std::mem::take(&mut training_state.current_episode);
+    training_state.episode_histories.push_back(episode);
+
     training_state.round += 1;
 }
 

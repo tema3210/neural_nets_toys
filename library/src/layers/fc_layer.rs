@@ -44,6 +44,10 @@ impl<const I: usize, const W: usize> Layer<I, W> {
 }
 
 impl<const I: usize, const W: usize> NeuralNetwork<I, W> for Layer<I, W> {
+    fn reset(&mut self) {
+        // No state to reset
+    }
+
     fn forward(&mut self, x: &[f64; I], helper: Option<&mut impl Helper>) -> [f64; W] {
         // Push the input to the helper for use in backpropagation
         if let Some(h) = helper {

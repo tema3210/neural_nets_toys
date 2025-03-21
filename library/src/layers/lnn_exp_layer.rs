@@ -81,6 +81,11 @@ impl<const I: usize, const O: usize, const D: usize> LNNLayer<I, O, D> {
 
 impl<const I: usize, const O: usize, const D: usize> NeuralNetwork<I, O> for LNNLayer<I, O, D> {
 
+    fn reset(&mut self) {
+        self.current_step = 0;
+        self.hidden_state = [[0.0; I]; D];
+    }
+
     fn forward(&mut self, x: &[f64; I], helper: Option<&mut impl Helper>) -> [f64; O] {
         let x = self.preprocess(x);
         // Push the input to the helper for use in backpropagation

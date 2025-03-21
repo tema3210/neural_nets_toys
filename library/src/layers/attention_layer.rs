@@ -98,6 +98,10 @@ impl<const I: usize, const M: usize> NeuralNetwork<I, I> for Attention<I, M> {
 
         ret
     }
+
+    fn reset(&mut self) {
+        // No state to reset
+    }
     
     fn preprocess(&mut self, x: &[f64; I]) -> [f64; I] {
         let mut multi_head_results = [[0.0; I]; M];

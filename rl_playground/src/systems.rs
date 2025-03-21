@@ -1,12 +1,10 @@
-use crate::{utils::spawn_reward, EndRoundEvent, EnvironmentConfig, Event, Experience, Obstacle, Reward, TrainingState};
+use crate::{agent::AGENT_SIZE, utils::spawn_reward, EndRoundEvent, EnvironmentConfig, Event, Experience, Obstacle, Reward, TrainingState};
 use rand::prelude::*;
 
 use super::agent::Agent;
 use bevy::prelude::*;
 
 const PROB_OF_REWARD_DETECT: f64 = 0.33;
-
-const AGENT_SIZE: f32 = 1.5;
 
 pub struct RNG(rand::distributions::Bernoulli, rand::rngs::StdRng);
 
@@ -23,17 +21,16 @@ pub fn agent_sensing(
   mut agents: Query<(&mut Agent, &Transform)>,
   obstacles: Query<&Transform, With<Obstacle>>,
   rewards: Query<&Transform, With<Reward>>,
-  cfg: Res<EnvironmentConfig>,
   mut rng: Local<RNG>,
 ) {
-  let max_distance = cfg.sight_distance;
   for (mut agent, agent_transform) in agents.iter_mut() {
       let agent_pos = agent_transform.translation.truncate();
       
       agent.sense(|direction| {
+
           // Cast ray to find closest obstacle
-          let mut obst_distance: f64 = 1.0;  // 1.0 means nothing detected (normalized)
-          
+          let mut obst_distance: f64 = 0.0;  // 1.0 means nothing detected (normalized)
+          let mut obst_found = 0;
           for obstacle_transform in obstacles.iter() {
               let obstacle_pos = obstacle_transform.translation.truncate();
               let to_obstacle = obstacle_pos - agent_pos;
@@ -41,13 +38,16 @@ pub fn agent_sensing(
               // Check if obstacle is in this direction
               let dot = direction.dot(to_obstacle.normalize());
               if dot > 0.7 {  // Within ~45 degrees of ray direction
-
-                  let dist = to_obstacle.length() / max_distance; //also normalized
-                  obst_distance = obst_distance.min(dist as f64);
+                obst_found += 1;
+                let dist = to_obstacle.length();
+                obst_distance += obst_distance.min(dist as f64);
               }
           }
+          
 
+          // Cast ray to find closest reward
           let mut reward_distance: f64 = 1.0;  // 1.0 means nothing detected (normalized)
+          let mut rew_found = 0;
           for reward in rewards.iter() {
               let reward_pos = reward.translation.truncate();
               let to_reward = reward_pos - agent_pos;
@@ -57,13 +57,17 @@ pub fn agent_sensing(
               if dot > 0.7 {  // Within ~45 degrees of ray direction
                   let RNG(ref dst, ref mut rng) = *rng;
                   if dst.sample(rng) {
-                    let dist = to_reward.length() / max_distance; //also normalized
+                    rew_found += 1;
+                    let dist = to_reward.length(); //also normalized
                     reward_distance = reward_distance.min(dist as f64);
                   }
               }
           }
-          
-          [obst_distance,reward_distance]
+
+          [
+            if obst_found > 0 {Some(obst_distance)} else {None},
+            if rew_found > 0 {Some(reward_distance)} else {None},
+          ]
       });
   }
 }
@@ -86,18 +90,24 @@ pub fn agent_thinking(
 
       let decoded = crate::utils::decode_action(&action);
 
+      // Log action
       training.current_episode.push(Experience {
         timestamp: current_time,
         fuel: agent.fuel as f64,
         event: Event::Action {
             state: state.clone(),
-            action: [action[0], action[1], action[2], action[3]],
+            action
         },
       });
+
+      agent.legs += decoded.movement;
       
       // Apply movement
-      transform_mut.translation += decoded.movement.extend(0.0);
-      agent.fuel -= cfg.fuel_cost_modifier;  // Fuel consumption
+      transform_mut.translation += agent.legs.extend(0.0);
+
+      println!("Agent: {:?} at: {:?}", agent.name, transform_mut.translation);
+
+      agent.fuel -= cfg.fuel_cost_modifier * decoded.movement.length();  // Fuel consumption
 
       if agent.fuel <= 0.0001 {
           training.current_episode.push(Experience {

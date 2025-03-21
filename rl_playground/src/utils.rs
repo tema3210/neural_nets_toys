@@ -1,4 +1,4 @@
-use crate::agent::OUTPUT_PARAMS;
+use crate::agent::{AGENT_SIZE, OUTPUT_PARAMS};
 use crate::systems::Decoded;
 use crate::{EnvironmentConfig, Obstacle, Reward};
 
@@ -39,7 +39,7 @@ pub fn spawn_obstacle(
   
   commands.spawn((
       Obstacle,
-      Mesh3d(meshes.add(Sphere::new(0.5).mesh())),
+      Mesh3d(meshes.add(Sphere::new(AGENT_SIZE).mesh())),
       MeshMaterial3d(materials.add(StandardMaterial {
           base_color: Color::srgb(0.9, 0.1, 0.1),
           ..default()
@@ -52,7 +52,9 @@ pub fn decode_action(action: &[f64; OUTPUT_PARAMS]) -> Decoded {
   let movement = Vec2::new(
     (action[0] - action[1]) as f32,  // Left vs Right
     (action[2] - action[3]) as f32,  // Up vs Down
-  ).normalize_or_zero() * 2.0;
+  );
+
+  // let movement = Vec2::new(action[0] as f32, action[1] as f32);
 
   Decoded {
     movement
