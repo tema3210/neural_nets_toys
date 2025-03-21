@@ -255,24 +255,25 @@ fn training_system(
 
     if round_end_reader.read().next().is_none() {
         // if the round has not ended skip training
-        println!("Round has not ended");
+        // println!("Round has not ended");
         return;
     }
     *retry_count += 1;
-    if *retry_count < env_config.sleep_interval {
+    // Reset agent position and state
+    for (mut agent, mut transform) in agents.iter_mut() {
+        // Reset position to start
+        *transform = Transform::from_xyz(0.0, 0.0, -0.5);
         
-        // Reset agent position and state
-        for (mut agent, mut transform) in agents.iter_mut() {
-            // Reset position to start
-            *transform = Transform::from_xyz(0.0, 0.0, -0.5);
-            
-            agent.reset();
-        }
-        commands.run_system(tr_sys.new_round);
+        agent.reset();
+    }
+
+    if *retry_count > env_config.sleep_interval {
+        *retry_count = 0;
         println!("Resetting simulation");
+        commands.run_system(tr_sys.new_round);
         return;
     }
-    *retry_count = 0;
+    
     
     //this one is assumed to be singular
     for (mut agent,_) in agents.iter_mut() {
