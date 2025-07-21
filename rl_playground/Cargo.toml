@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.15",  default-features = false,  features = [
+bevy = { version = "0.16",  default-features = false,  features = [
   # "dynamic_linking", 
   "bevy_winit",        # Window management
   "bevy_core_pipeline",# Required for rendering
@@ -15,4 +15,4 @@ bevy = { version = "0.15",  default-features = false,  features = [
   "bevy_ui"
 ] }
 rand = "0.8"
-neural_nets_toys = { path = "../library" }  # Your neural network library
+burn = { version = "0.18.0", features = ["wgpu", "train"] }
