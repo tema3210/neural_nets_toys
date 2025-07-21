@@ -1,7 +1,7 @@
 # Use the Microsoft dev container as the base image
-FROM mcr.microsoft.com/vscode/devcontainers/base:0-buster
+FROM mcr.microsoft.com/vscode/devcontainers/base:bookworm
 
-RUN localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
+# RUN localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
 ENV DEBIAN_FRONTEND noninteractive
 
 # Update package list and install packages required for Android app development
