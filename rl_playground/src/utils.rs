@@ -22,15 +22,20 @@ pub fn spawn_reward(
 
     commands.spawn((
         Reward { value: 1.0 },
-        PbrBundle {
-            mesh: meshes.add(Sphere::new(0.5)),
-            material: materials.add(StandardMaterial {
-                base_color: Color::rgb(0.9, 0.9, 0.1),
-                ..default()
-            }),
-            transform: Transform::from_xyz(x, y, -0.5),
-            ..default()
-        },
+        Mesh3d (
+            meshes.add(
+              Sphere::new(0.5).mesh().build(),
+            )
+        ),
+        MeshMaterial3d (
+            materials.add(
+              StandardMaterial {
+                  base_color: Color::srgb(0.9, 0.9, 0.1),
+                  ..default()
+              },
+            )
+        ),
+        Transform::from_xyz(x, y, -0.5)
     ));
 }
 
@@ -46,15 +51,20 @@ pub fn spawn_obstacle(
 
     commands.spawn((
         Obstacle,
-        PbrBundle {
-            mesh: meshes.add(Sphere::new(AGENT_SIZE)),
-            material: materials.add(StandardMaterial {
-                base_color: Color::rgb(0.9, 0.1, 0.1),
-                ..default()
-            }),
-            transform: Transform::from_xyz(x, y, -0.5),
-            ..default()
-        },
+        Mesh3d (
+            meshes.add(
+              Sphere::new(AGENT_SIZE).mesh().build(),
+            )
+        ),
+        MeshMaterial3d (
+            materials.add(
+              StandardMaterial {
+                  base_color: Color::srgb(0.1, 0.1, 0.9),
+                  ..default()
+              },
+            )
+        ),
+        Transform::from_xyz(x, y, -0.5),
     ));
 }
 

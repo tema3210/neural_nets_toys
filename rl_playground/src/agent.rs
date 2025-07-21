@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use burn::{
-    backend::{Autodiff, NdArray},
+    backend::{Autodiff, Wgpu},
     module::Module,
-    nn::{activation::ReLU, Linear, LinearConfig},
-    tensor::{backend::Backend, Data, Tensor},
+    nn::{Linear, LinearConfig},
+    tensor::{backend::Backend, TensorData, Tensor, activation::relu},
 };
 
 pub const AGENT_SIZE: f32 = 2.0;
@@ -16,15 +16,19 @@ pub const INPUT_PARAMS: usize = SENSOR_NUMBER * 2 + 2 + 2;
 // 2 movement actions
 pub const OUTPUT_PARAMS: usize = 4;
 
-type MyBackend = NdArray;
+type MyBackend = Wgpu;
 type MyAutodiffBackend = Autodiff<MyBackend>;
 
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
     linear1: Linear<B>,
     linear2: Linear<B>,
-    activation: ReLU,
+    // activation: ReLU,
 }
+
+unsafe impl<B: Backend> Sync for Model<B>  where B: Sync {}
+
+unsafe impl<B: Backend> Send for Model<B>  where B: Send {}
 
 impl<B: Backend> Model<B> {
     pub fn new(device: &B::Device) -> Self {
@@ -33,13 +37,13 @@ impl<B: Backend> Model<B> {
         Self {
             linear1,
             linear2,
-            activation: ReLU::new(),
+            // activation: ReLU::new(),
         }
     }
 
     pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
         let x = self.linear1.forward(input);
-        let x = self.activation.forward(x);
+        let x = relu(x);
         self.linear2.forward(x)
     }
 }
@@ -51,21 +55,19 @@ pub struct AgentBrain {
 }
 
 impl AgentBrain {
-    pub fn new() -> Self {
-        let device = <MyAutodiffBackend as Backend>::Device::default();
-        let model = Model::new(&device);
-        Self { model, device }
+    pub fn new(device: &<MyAutodiffBackend as Backend>::Device) -> Self {
+        let model = Model::new(device);
+        Self { model, device: device.clone() }
     }
 
     pub fn reset(&mut self) {
-        let device = <MyAutodiffBackend as Backend>::Device::default();
-        self.model = Model::new(&device);
+        self.model = Model::new(&self.device);
     }
 
     pub fn forward(&self, input: &[f64; INPUT_PARAMS]) -> [f64; OUTPUT_PARAMS] {
-        let input_data = Data::new(
-            input.iter().map(|&x| x as f32).collect::<Vec<_>>(),
-            [1, INPUT_PARAMS].into(),
+        let input_data = TensorData::new(
+            input.to_vec(),
+            [1, INPUT_PARAMS],
         );
         let input_tensor = Tensor::<MyAutodiffBackend, 1>::from_data(input_data, &self.device)
             .reshape([1, INPUT_PARAMS]);
@@ -73,11 +75,7 @@ impl AgentBrain {
         // Forward pass through the neural network
         let output = self.model.forward(input_tensor);
         let output_data = output.into_data();
-        let output_values: Vec<f32> = output_data.value;
-        let mut result = [0.0; OUTPUT_PARAMS];
-        for i in 0..OUTPUT_PARAMS {
-            result[i] = output_values[i] as f64;
-        }
+        let result = output_data.iter().collect::<Vec<_>>().try_into().unwrap();
         result
     }
 }
@@ -108,11 +106,11 @@ impl Agent {
         self.legs = Vec2::ZERO;
     }
 
-    pub fn new(name: String, sight_distance: f32) -> Self {
+    pub fn new(name: String, sight_distance: f32, device: &<MyAutodiffBackend as Backend>::Device) -> Self {
         Self {
             sight_distance,
             name,
-            brain: AgentBrain::new(),
+            brain: AgentBrain::new(&device),
             sensors: [[0.0; 2]; 8],
             fuel: 100.0,
             rewards: 0,
