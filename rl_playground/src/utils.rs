@@ -5,9 +5,7 @@ use bevy::{
 use rand::prelude::*;
 
 use crate::{
-    agent::{AGENT_SIZE, OUTPUT_PARAMS},
-    systems::Decoded,
-    EnvironmentConfig, Obstacle, Reward,
+    agent::{AGENT_SIZE, INPUT_PARAMS, OUTPUT_PARAMS}, systems::Decoded, EndReason, EnvironmentConfig, Experience, Obstacle, Reward, RlEvent
 };
 
 pub fn spawn_reward(
@@ -79,6 +77,65 @@ pub fn decode_action(action: &[f64; OUTPUT_PARAMS]) -> Decoded {
     Decoded { movement }
 }
 
+pub fn form_training_data<'i>(
+    data: impl Iterator<Item = &'i Experience>,
+    reward_at_timestamp: &impl Fn(f64) -> f64,
+    agent_state: [f64; INPUT_PARAMS],
+) -> Vec<([f64; INPUT_PARAMS], [f64; OUTPUT_PARAMS])> {
+    data.filter_map(|x| {
+        // Calculate reward
+        let base_reward = reward_at_timestamp(x.timestamp) - 0.5;
+
+        let fuel_eff = x.fuel / 100.0; // fuel expended, %
+
+        let (state, action) = match &x.event {
+            RlEvent::Action { state, action } => (state, action),
+            RlEvent::End {
+                reason,
+                rewards_collected,
+            } => {
+                let action = [0.0; OUTPUT_PARAMS]; // at the end we don't move
+                let state = agent_state; // state at the end is the same as the last state
+                let reward = match reason {
+                    EndReason::OutOfBounds => -1.0,
+                    EndReason::OutOfFuel => *rewards_collected as f64 * 0.5,
+                    EndReason::ManualReset => 0.0,
+                };
+                return Some((state, action, reward, x.timestamp));
+            }
+            _ => return None,
+        };
+
+        let combined_reward = if base_reward > 0.0 {
+            base_reward * (1.0 + fuel_eff) // Up to 2x reward when fuel is 100%
+        } else {
+            base_reward // Keep negative feedback unchanged
+        };
+
+        Some((*state, *action, combined_reward, x.timestamp))
+    })
+    .fold(
+        vec![], // training data
+        |mut data, (state, action, reward, _at)| {
+            // 0, 1 -> left, right; 2, 3 -> up, down
+            let mut new_action = [0.0; OUTPUT_PARAMS];
+            // Scale action by reward
+            for i in 0..OUTPUT_PARAMS {
+                new_action[i] = action[i] as f64 * reward.abs();
+            }
+
+            // inverse target movement if reward is negative
+            if reward < 0.005 {
+                new_action.swap(0, 1);
+                new_action.swap(2, 3);
+            }
+
+            data.push((state, new_action));
+            data
+        },
+    )
+}
+
 pub fn new_round(
     mut commands: Commands,
     config: Res<EnvironmentConfig>,
@@ -91,7 +148,7 @@ pub fn new_round(
 
     // Clear the scene
     for entity in obstacles.iter().chain(rewards.iter()) {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Spawn rewards

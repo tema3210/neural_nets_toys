@@ -1,4 +1,4 @@
-use crate::{agent::AGENT_SIZE, utils::spawn_reward, EndRoundEvent, EnvironmentConfig, Event, Experience, Obstacle, Reward, TrainingState};
+use crate::{agent::AGENT_SIZE, utils::spawn_reward, EndRoundEvent, EnvironmentConfig, RlEvent, Experience, Obstacle, Reward, TrainingState};
 use rand::prelude::*;
 
 use super::agent::Agent;
@@ -94,7 +94,7 @@ pub fn agent_thinking(
       training.current_episode.push(Experience {
         timestamp: current_time,
         fuel: agent.fuel as f64,
-        event: Event::Action {
+        event: RlEvent::Action {
             state: state.clone(),
             action
         },
@@ -113,12 +113,12 @@ pub fn agent_thinking(
           training.current_episode.push(Experience {
               timestamp: current_time,
               fuel: agent.fuel as f64,
-              event: Event::End {
+              event: RlEvent::End {
                   reason: crate::EndReason::OutOfFuel,
                   rewards_collected: agent.rewards,
               },
           });
-          ew.send(EndRoundEvent {
+          ew.write(EndRoundEvent {
             reason: crate::EndReason::OutOfFuel,
           });
       }
@@ -145,7 +145,7 @@ pub fn collision_detection(
           training.current_episode.push(Experience {
             timestamp: current_time,
             fuel: agent.fuel as f64,
-            event: Event::Collision,
+            event: RlEvent::Collision,
           });
         }
       }
@@ -156,12 +156,12 @@ pub fn collision_detection(
           training.current_episode.push(Experience {
               timestamp: current_time,
               fuel: agent.fuel as f64,
-              event: Event::End {
+              event: RlEvent::End {
                   reason: crate::EndReason::OutOfBounds,
                   rewards_collected: agent.rewards,
               },
           });
-          ew.send(EndRoundEvent {
+          ew.write(EndRoundEvent {
             reason: crate::EndReason::OutOfBounds,
           });
       }
@@ -197,7 +197,7 @@ pub fn reward_collection(
               training.current_episode.push(Experience {
                 timestamp: current_time,
                 fuel: agent.fuel as f64,
-                event: Event::Reward,
+                event: RlEvent::Reward,
               });
               
               commands.entity(reward_entity).despawn();

@@ -1,10 +1,8 @@
 use bevy::prelude::*;
 use burn::{
-    backend::{Autodiff, Wgpu},
-    module::Module,
-    nn::{Linear, LinearConfig},
-    tensor::{backend::Backend, TensorData, Tensor, activation::relu},
+    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{loss::MseLoss, Linear, LinearConfig}, optim::{Adam, AdamConfig, SimpleOptimizer}, tensor::{activation::*, backend::Backend, Tensor, TensorData}
 };
+use crate::{MyAutodiffBackend};
 
 pub const AGENT_SIZE: f32 = 2.0;
 
@@ -16,55 +14,79 @@ pub const INPUT_PARAMS: usize = SENSOR_NUMBER * 2 + 2 + 2;
 // 2 movement actions
 pub const OUTPUT_PARAMS: usize = 4;
 
-type MyBackend = Wgpu;
-type MyAutodiffBackend = Autodiff<MyBackend>;
-
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
-    linear1: Linear<B>,
-    linear2: Linear<B>,
+    inp: Linear<B>,
+    // inner: Lstm<B> ,
+    out: Linear<B>,
     // activation: ReLU,
 }
 
-unsafe impl<B: Backend> Sync for Model<B>  where B: Sync {}
+unsafe impl<B: Backend> Sync for Model<B> where B: Sync {}
 
-unsafe impl<B: Backend> Send for Model<B>  where B: Send {}
+unsafe impl<B: Backend> Send for Model<B> where B: Send {}
 
-impl<B: Backend> Model<B> {
-    pub fn new(device: &B::Device) -> Self {
+impl Model<MyAutodiffBackend> {
+    pub fn new(device: &<Autodiff<burn_fusion::Fusion<burn::backend::wgpu::CubeBackend<WgpuRuntime, f32, i32, u32>>> as Backend>::Device) -> Self {
         let linear1 = LinearConfig::new(INPUT_PARAMS, 32).init(device);
+        // let lstm = LstmConfig::new(32, 32, true).init(device);
         let linear2 = LinearConfig::new(32, OUTPUT_PARAMS).init(device);
         Self {
-            linear1,
-            linear2,
-            // activation: ReLU::new(),
+            inp: linear1,
+            // inner: lstm,
+            out: linear2,
         }
     }
 
-    pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
-        let x = self.linear1.forward(input);
+    pub fn forward(&self, input: Tensor<MyAutodiffBackend, 2>) -> Tensor<MyAutodiffBackend, 2> {
+        let x = self.inp.forward(input);
         let x = relu(x);
-        self.linear2.forward(x)
+        // let (x, st) = self.inner.forward(x, brain.memory);
+        // brain.memory = Some(st);
+        let x = self.out.forward(x);
+        relu(x)
+    }
+
+    ///TODO: finish / review
+    pub fn train<O: SimpleOptimizer<MyAutodiffBackend>>(
+        &mut self,
+        input: Tensor<MyAutodiffBackend, 2>,
+        target: Tensor<MyAutodiffBackend, 2>,
+        optimizer: &mut O,
+        opt_state: &mut Option<O::State<2>>
+    ) {
+        let output = self.forward(input.clone());
+        let loss = MseLoss::new();
+        let grad = loss.forward_no_reduction(output, target);
+
+        let (model, state) = optimizer.step(0.001f64, input, grad, None);
+        self.model = model;
+        *opt_state = Some(state);
     }
 }
 
 // Neural network brain for the agent
 pub struct AgentBrain {
-    model: Model<MyAutodiffBackend>,
+    pub model: Model<MyAutodiffBackend>,
+    // optimizer: burn::optim::Adam,
     device: <MyAutodiffBackend as Backend>::Device,
+
+    // memory: Option<LstmState<MyAutodiffBackend, 2>>,
 }
 
 impl AgentBrain {
     pub fn new(device: &<MyAutodiffBackend as Backend>::Device) -> Self {
         let model = Model::new(device);
+        // let optimizer = burn::optim::Adam::new(&model);
         Self { model, device: device.clone() }
     }
 
     pub fn reset(&mut self) {
         self.model = Model::new(&self.device);
+        // self.optimizer = burn::optim::Adam::new(&self.model);
     }
 
-    pub fn forward(&self, input: &[f64; INPUT_PARAMS]) -> [f64; OUTPUT_PARAMS] {
+    pub fn forward(&mut self, input: &[f64; INPUT_PARAMS]) -> [f64; OUTPUT_PARAMS] {
         let input_data = TensorData::new(
             input.to_vec(),
             [1, INPUT_PARAMS],
@@ -102,7 +124,7 @@ impl Agent {
         self.fuel = 100.0;
         self.rewards = 0;
         self.sensors = [[0.0; 2]; 8];
-        self.brain.reset();
+        // self.brain.reset();
         self.legs = Vec2::ZERO;
     }
 
@@ -156,5 +178,35 @@ impl Agent {
         println!("I: {:?}", input);
         println!("O: {:?}", output);
         output
+    }
+
+    /// Sleep to train the agent
+    pub fn sleep(&mut self, data: &[([f64; INPUT_PARAMS], [f64; OUTPUT_PARAMS])]) {
+
+        let optimizer = Adam::for_model(&self.brain.model);
+        let mut optimizer = optimizer.init(&self.brain.device);
+
+        let mut optimizer_state: Option<_> = None;
+
+        let input_tensor = Tensor::<MyAutodiffBackend, 2>::from_data(
+            TensorData::new(
+                data.iter().map(|(input, _)| input.iter()).flatten().copied().collect(),
+                [data.len(), INPUT_PARAMS],
+            ),
+            &self.brain.device,
+        );
+
+        let output_tensor = Tensor::<MyAutodiffBackend, 2>::from_data(
+            TensorData::new(
+                data.iter().map(|(_, output)| output.iter()).flatten().copied().collect(),
+                [data.len(), OUTPUT_PARAMS],
+            ),
+            &self.brain.device,
+        );
+        
+        for (input, output) in data {
+            self.brain.model.train(input_tensor, output_tensor, &mut optimizer, &mut optimizer_state);
+        }
+        
     }
 }

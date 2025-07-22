@@ -1,4 +1,5 @@
 #![feature(type_alias_impl_trait)]
+#![recursion_limit = "256"]
 use std::collections::VecDeque;
 use std::ops::Range;
 
@@ -7,13 +8,28 @@ use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemId;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use neural_nets_toys::{train, TrainParams};
+// use neural_nets_toys::{train, TrainParams};
+
+use burn::{
+    backend::{Autodiff, Wgpu},
+    tensor::backend::Backend,
+};
+
 
 mod agent;
 
 mod utils;
 
 mod systems;
+
+pub type MyBackend = Wgpu;
+
+pub type MyAutodiffBackend = Autodiff<MyBackend>;
+
+#[derive(Resource)]
+struct Device {
+    device: <MyAutodiffBackend as Backend>::Device,
+}
 
 #[derive(Resource)]
 struct UtilSystems {
@@ -69,7 +85,7 @@ mod app_ui {
         agents: Query<&Agent>,
         mut text_query: Query<&mut Text, With<TrainingInfoText>>,
     ) {
-        if let Ok(mut text) = text_query.get_single_mut() {
+        if let Ok(mut text) = text_query.single_mut() {
             let mut info = String::new();
             
             // Basic training info
@@ -78,7 +94,7 @@ mod app_ui {
             info.push_str(&format!("Current episode events: {}\n", training_state.current_episode.len()));
             
             // Agent info
-            if let Ok(agent) = agents.get_single() {
+            if let Ok(agent) = agents.single() {
                 info.push_str(&format!("Agent fuel: {:.1}\n", agent.fuel));
                 info.push_str(&format!("Rewards collected: {}\n", agent.rewards));
             }
@@ -95,6 +111,7 @@ fn setup_environment(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    device: Res<Device>,
 ) {
     let plane_z_level = -0.5;
 
@@ -104,7 +121,7 @@ fn setup_environment(
 
     // Spawn agent
     commands.spawn((
-        Agent::new("John".to_string(),_config.sight_distance),
+        Agent::new("John".to_string(),_config.sight_distance, &device.device),
         Mesh3d(meshes.add(Cuboid::new(
             agent::AGENT_SIZE,
             agent::AGENT_SIZE,
@@ -231,6 +248,9 @@ impl Plugin for RLPlugin {
             })
             .insert_resource(TrainingState::default())
             .init_resource::<UtilSystems>()
+            .insert_resource(Device {
+                device: <MyAutodiffBackend as Backend>::Device::default(),
+            })
 
             // .add_event::<ResetSimulationEvent>()
             .add_event::<EndRoundEvent>() // Register the reset event
@@ -279,7 +299,7 @@ pub struct Reward {
 }
 
 #[derive(Clone)]
-pub enum Event {
+pub enum RlEvent {
     // Agent took an action (state, action chosen)
     Action {
         state: [f64; INPUT_PARAMS],
@@ -307,8 +327,10 @@ pub enum EndReason {
 pub struct Experience {
     timestamp: f64,
     fuel: f64,
-    event: Event,
+    event: RlEvent,
 }
+
+
 
 // Environment configuration
 #[derive(Resource, Default)]
@@ -377,8 +399,8 @@ fn training_system(
         let reward_at_timestamp = {
             let exprs: Vec<(f64,f64)> = get_exprt_iter()
             .filter_map(|x| match x.event {
-                Event::Reward => Some((x.timestamp, 1.0)),
-                Event::Collision => Some((x.timestamp, -1.0)),
+                RlEvent::Reward => Some((x.timestamp, 1.0)),
+                RlEvent::Collision => Some((x.timestamp, -1.0)),
                 _ => None,
             }).collect();
 
@@ -411,99 +433,14 @@ fn training_system(
             }
         };
 
-        let training_data= get_exprt_iter()
-            .filter_map(|x| {
-
-                // Calculate reward
-                let base_reward = reward_at_timestamp(x.timestamp) - 0.5;
-
-                let fuel_eff = x.fuel / 100.0; // fuel expended, %
-
-                let (state,action) = match &x.event {
-                    Event::Action { state, action } => (state, action),
-                    Event::End { reason, rewards_collected } => {
-                        let action = [0.0; OUTPUT_PARAMS]; // at the end we don't move
-                        let state = agent_state; // state at the end is the same as the last state
-                        let reward = match reason {
-                            EndReason::OutOfBounds => -1.0,
-                            EndReason::OutOfFuel => *rewards_collected as f64 * 0.5,
-                            EndReason::ManualReset => 0.0,
-                        };
-                        return Some((state,action,reward,x.timestamp));
-                    },
-                    _ => return None,
-                };
-
-                let combined_reward = if base_reward > 0.0 {
-                    base_reward * (1.0 + fuel_eff) // Up to 2x reward when fuel is 100%
-                } else {
-                    base_reward // Keep negative feedback unchanged
-                };
-
-                Some((*state,*action,combined_reward,x.timestamp))
-            })
-            .fold((
-                vec![], // training data
-                f64::NEG_INFINITY, // lowest timetamp
-                f64::INFINITY, // highest timestamp
-                
-            ),|(mut data,min,max),(state,action,reward,at)| {
-
-                // 0, 1 -> left, right; 2, 3 -> up, down
-                let mut new_action =  [0.0;OUTPUT_PARAMS]; 
-                // Scale action by reward
-                for i in 0..OUTPUT_PARAMS {
-                    new_action[i] = action[i] as f64 * reward.abs();
-                }
-
-                // inverse target movement if reward is negative
-                if reward < 0.005 {
-                    new_action.swap(0, 1);
-                    new_action.swap(2, 3);
-                    // new_action[0] = -new_action[0];
-                    // new_action[1] = -new_action[1];
-                }
-                
-                data.push((state,new_action));
-                (   
-                    data,
-                    min.min(at),
-                    max.max(at),
-                )
-            });
+        let training_data = crate::utils::form_training_data(
+            get_exprt_iter(),
+            &reward_at_timestamp,
+            agent_state
+        );
         
-        // let temperature = training_data.0.len() as f64 * (training_data.2 - training_data.1 ) / training_data.2;
-        let temperature = 0.5;
-    
-        let train_params = TrainParams {
-            epochs: 200,
-            temperature,
-            cutoff: 0.0001,
-            fn_loss: |t, p| {
-                // let tx = t[0] - t[1];
-                // let ty = t[2] - t[3];
-                // let px = p[0] - p[1];
-                // let py = p[2] - p[3];
-                // let tv = Vec2::new(tx as f32, ty as f32);
-                // let pv = Vec2::new(px as f32, py as f32);
-                let loss = (
-                    (t[0] - p[0]).powi(2) +
-                    (t[1] - p[1]).powi(2) +
-                    (t[2] - p[2]).powi(2) +
-                    (t[3] - p[3]).powi(2)
-                ).sqrt();
-                [
-                    (t[0] - p[0]) * loss,
-                    (t[1] - p[1]) * loss,
-                    (t[2] - p[2]) * loss,
-                    (t[3] - p[3]) * loss,
-                ]
-            },
-        };
-
-        // Train the agent
-        println!("Training agent with {} samples", training_data.0.len());
-        train(&mut agent.brain.network, &training_data.0, train_params);
+        // Turbo sleep - this is the training
+        agent.sleep(&training_data[..])
     }
     // Clear current episode
     let episode = std::mem::take(&mut training_state.current_episode);
