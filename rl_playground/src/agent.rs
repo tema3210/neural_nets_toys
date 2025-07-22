@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use burn::{
-    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{loss::MseLoss, Linear, LinearConfig}, optim::{Adam, AdamConfig, SimpleOptimizer}, tensor::{activation::*, backend::Backend, Tensor, TensorData}
+    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{loss::{MseLoss, Reduction}, Linear, LinearConfig}, optim::{AdamConfig, GradientsParams, Optimizer, SimpleOptimizer}, tensor::{activation::*, backend::Backend, Tensor, TensorData}
 };
 use crate::{MyAutodiffBackend};
 
@@ -46,28 +46,11 @@ impl Model<MyAutodiffBackend> {
         let x = self.out.forward(x);
         relu(x)
     }
-
-    ///TODO: finish / review
-    pub fn train<O: SimpleOptimizer<MyAutodiffBackend>>(
-        &mut self,
-        input: Tensor<MyAutodiffBackend, 2>,
-        target: Tensor<MyAutodiffBackend, 2>,
-        optimizer: &mut O,
-        opt_state: &mut Option<O::State<2>>
-    ) {
-        let output = self.forward(input.clone());
-        let loss = MseLoss::new();
-        let grad = loss.forward_no_reduction(output, target);
-
-        let (model, state) = optimizer.step(0.001f64, input, grad, None);
-        self.model = model;
-        *opt_state = Some(state);
-    }
 }
 
 // Neural network brain for the agent
 pub struct AgentBrain {
-    pub model: Model<MyAutodiffBackend>,
+    model: Option<Model<MyAutodiffBackend>>,
     // optimizer: burn::optim::Adam,
     device: <MyAutodiffBackend as Backend>::Device,
 
@@ -78,11 +61,11 @@ impl AgentBrain {
     pub fn new(device: &<MyAutodiffBackend as Backend>::Device) -> Self {
         let model = Model::new(device);
         // let optimizer = burn::optim::Adam::new(&model);
-        Self { model, device: device.clone() }
+        Self { model: Some(model), device: device.clone() }
     }
 
     pub fn reset(&mut self) {
-        self.model = Model::new(&self.device);
+        self.model = Some(Model::new(&self.device));
         // self.optimizer = burn::optim::Adam::new(&self.model);
     }
 
@@ -95,10 +78,40 @@ impl AgentBrain {
             .reshape([1, INPUT_PARAMS]);
 
         // Forward pass through the neural network
-        let output = self.model.forward(input_tensor);
+        let Some(model) = self.model.take() else {
+            panic!("Impossible! F")
+        };
+
+        let output = model.forward(input_tensor);
+
+        self.model = Some(model);
+
         let output_data = output.into_data();
         let result = output_data.iter().collect::<Vec<_>>().try_into().unwrap();
         result
+    }
+
+    ///TODO: finish / review
+    pub fn train<O: Optimizer<Model<MyAutodiffBackend>, MyAutodiffBackend>>(
+        &mut self,
+        input: Tensor<MyAutodiffBackend, 2>,
+        target: Tensor<MyAutodiffBackend, 2>,
+        optimizer: &mut O
+    ) {
+        let Some(mut model) = self.model.take() else {
+            panic!("Impossible! B")
+        };
+        let output = model.forward(input.clone());
+        let loss = MseLoss::new().forward(output, target, Reduction::Mean);
+        // let grad = loss.forward_no_reduction(output, target);
+        let grads = loss.backward();
+
+        // Gradients linked to each parameter of the model.
+        let grads = GradientsParams::from_grads(grads, &model);
+
+        model = optimizer.step(0.001f64, model, grads);
+
+        self.model = Some(model)
     }
 }
 
@@ -183,10 +196,10 @@ impl Agent {
     /// Sleep to train the agent
     pub fn sleep(&mut self, data: &[([f64; INPUT_PARAMS], [f64; OUTPUT_PARAMS])]) {
 
-        let optimizer = Adam::for_model(&self.brain.model);
-        let mut optimizer = optimizer.init(&self.brain.device);
+        let optimizer = AdamConfig::new();
+        let mut optimizer = optimizer.init();
 
-        let mut optimizer_state: Option<_> = None;
+        // let mut optimizer_state: Option<_> = None;
 
         let input_tensor = Tensor::<MyAutodiffBackend, 2>::from_data(
             TensorData::new(
@@ -203,10 +216,8 @@ impl Agent {
             ),
             &self.brain.device,
         );
-        
-        for (input, output) in data {
-            self.brain.model.train(input_tensor, output_tensor, &mut optimizer, &mut optimizer_state);
-        }
+
+        self.brain.train(input_tensor, output_tensor, &mut optimizer);
         
     }
 }
