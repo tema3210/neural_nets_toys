@@ -74,7 +74,7 @@ impl AgentBrain {
             input.to_vec(),
             [1, INPUT_PARAMS],
         );
-        let input_tensor = Tensor::<MyAutodiffBackend, 1>::from_data(input_data, &self.device)
+        let input_tensor = Tensor::<MyAutodiffBackend, 2>::from_data(input_data, &self.device)
             .reshape([1, INPUT_PARAMS]);
 
         // Forward pass through the neural network
