@@ -17,7 +17,10 @@ pub const OUTPUT_PARAMS: usize = 4;
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
     inp: Linear<B>,
-    inner: Lstm<B>,
+    prefix: Linear<B>,
+    mem1: Lstm<B>,
+    mem2: Lstm<B>,
+    suffix: Linear<B>,
     out: Linear<B>,
     // activation: ReLU,
 
@@ -25,24 +28,31 @@ pub struct Model<B: Backend> {
 
 impl Model<MyAutodiffBackend> {
     pub fn new(device: &<Autodiff<burn_fusion::Fusion<burn::backend::wgpu::CubeBackend<WgpuRuntime, f32, i32, u32>>> as Backend>::Device) -> Self {
-        let linear1 = LinearConfig::new(INPUT_PARAMS, 32).init(device);
-        let lstm = LstmConfig::new(32, 32, true).init(device);
-        let linear2 = LinearConfig::new(32, OUTPUT_PARAMS).init(device);
         Self {
-            inp: linear1,
-            inner: lstm,
-            out: linear2,
+            inp: LinearConfig::new(INPUT_PARAMS, 32).init(device),
+            prefix: LinearConfig::new(32, 16).init(device),
+            mem1: LstmConfig::new(16, 64, true).init(device),
+            mem2: LstmConfig::new(64, 32, true).init(device),
+            suffix: LinearConfig::new(32, 16).init(device),
+            out: LinearConfig::new(16, OUTPUT_PARAMS).init(device),
         }
     }
 
     /// input: batch_size, seq_l, INPUT_PARAMS;
     /// 
     /// output: batch_size, seq_l, OUTPUT_PARAMS;
-    pub fn forward(&mut self, input: Tensor<MyAutodiffBackend, 3>, inner_state: &mut Option<LstmState<MyAutodiffBackend, 2>>) -> Tensor<MyAutodiffBackend, 3> {
+    pub fn forward(&mut self, input: Tensor<MyAutodiffBackend, 3>, brain: &mut AgentBrain) -> Tensor<MyAutodiffBackend, 3> {
         let x = self.inp.forward(input);
         let x = relu(x);
-        let (x, st) = self.inner.forward(x, inner_state.take());
-        *inner_state = Some(st);
+        let x = self.prefix.forward(x);
+        let x = relu(x);
+        // Forward pass through the LSTM layers
+        let (x, st) = self.mem1.forward(x, brain.mem1.take());
+        brain.mem1 = Some(st);
+        let (x, st) = self.mem2.forward(x, brain.mem2.take());
+        brain.mem2 = Some(st);
+        let x = self.suffix.forward(x);
+        let x = relu(x);
         let x = self.out.forward(x);
         relu(x)
     }
@@ -57,14 +67,15 @@ pub struct AgentBrain {
     model: Option<Model<MyAutodiffBackend>>,
     device: <MyAutodiffBackend as Backend>::Device,
 
-    memory: Option<LstmState<MyAutodiffBackend, 2>>,
+    mem1: Option<LstmState<MyAutodiffBackend, 2>>,
+    mem2: Option<LstmState<MyAutodiffBackend, 2>>,
 }
 
 impl AgentBrain {
     pub fn new(device: &<MyAutodiffBackend as Backend>::Device) -> Self {
         let model = Model::new(device);
         // let optimizer = burn::optim::Adam::new(&model);
-        Self { model: Some(model), device: device.clone(), memory: None }
+        Self { model: Some(model), device: device.clone(), mem1: None, mem2: None }
     }
 
     pub fn reset(&mut self) {
@@ -82,10 +93,10 @@ impl AgentBrain {
 
         // Forward pass through the neural network
         let Some(mut model) = self.model.take() else {
-            panic!("Impossible! F")
+            panic!("Impossible! F");
         };
 
-        let output = model.forward(input_tensor, &mut self.memory);
+        let output = model.forward(input_tensor, self);
 
         self.model = Some(model);
 
@@ -103,7 +114,7 @@ impl AgentBrain {
         let Some(mut model) = self.model.take() else {
             panic!("Impossible! B")
         };
-        let output = model.forward(input.clone(), &mut self.memory);
+        let output = model.forward(input.clone(), self);
         let loss = MseLoss::new().forward(output, target, Reduction::Mean);
         // let grad = loss.forward_no_reduction(output, target);
         let grads = loss.backward();
