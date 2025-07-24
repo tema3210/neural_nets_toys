@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use burn::{
-    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{gru::{Gru, GruConfig}, loss::{MseLoss, Reduction}, Linear, LinearConfig, Lstm, LstmConfig, LstmState}, optim::{AdamConfig, GradientsParams, Optimizer}, tensor::{activation::*, backend::Backend, Tensor, TensorData}
+    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{attention::{MultiHeadAttention, MultiHeadAttentionConfig}, gru::{Gru, GruConfig}, loss::{MseLoss, Reduction}, Linear, LinearConfig, Lstm, LstmConfig, LstmState}, optim::{AdamConfig, GradientsParams, Optimizer}, tensor::{activation::*, backend::Backend, Tensor, TensorData}
 };
 use crate::{MyAutodiffBackend};
 
@@ -19,6 +19,7 @@ pub struct Model<B: Backend> {
     inp: Linear<B>,
     prefix: Linear<B>,
     mem1: Lstm<B>,
+    inner: Linear<B>,
     mem2: Lstm<B>,
     suffix: Linear<B>,
     out: Linear<B>,
@@ -32,6 +33,7 @@ impl Model<MyAutodiffBackend> {
             inp: LinearConfig::new(INPUT_PARAMS, 32).init(device),
             prefix: LinearConfig::new(32, 16).init(device),
             mem1: LstmConfig::new(16, 64, true).init(device),
+            inner: LinearConfig::new(64, 64).init(device),
             mem2: LstmConfig::new(64, 32, true).init(device),
             suffix: LinearConfig::new(32, 16).init(device),
             out: LinearConfig::new(16, OUTPUT_PARAMS).init(device),
@@ -49,6 +51,9 @@ impl Model<MyAutodiffBackend> {
         // Forward pass through the LSTM layers
         let (x, st) = self.mem1.forward(x, brain.mem1.take());
         brain.mem1 = Some(st);
+
+        let x = self.inner.forward(x);
+
         let (x, st) = self.mem2.forward(x, brain.mem2.take());
         brain.mem2 = Some(st);
         let x = self.suffix.forward(x);
@@ -207,25 +212,45 @@ impl Agent {
     }
 
     /// Sleep to train the agent
-    pub fn sleep(&mut self, data: &[([f64; INPUT_PARAMS], [f64; OUTPUT_PARAMS])]) {
+    pub fn sleep(&mut self, data: &Vec<Vec<([f64; INPUT_PARAMS], [f64; OUTPUT_PARAMS])>>) {
 
         let optimizer = AdamConfig::new();
         let mut optimizer = optimizer.init();
 
         // let mut optimizer_state: Option<_> = None;
 
-        let input_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
+        let max_seq_len = data.iter().map(|x| x.len()).max().unwrap_or(0);
+        // Prepare input and output tensors
+        // input: batch_size, seq_l, INPUT_PARAMS;
+        // output: batch_size, seq_l, OUTPUT_PARAMS;
+
+        let mut input = vec![];
+        let mut output = vec![];
+
+        for (_, story) in data.iter().enumerate() {
+            for (input_data, output_data) in story.iter() {
+                input.extend(input_data.iter().copied());
+                output.extend(output_data.iter().copied());
+            }
+            let input_pad = (max_seq_len - story.len() ) * INPUT_PARAMS;
+            let output_pad = (max_seq_len - story.len() ) * OUTPUT_PARAMS;
+
+            input.extend(vec![0.0; input_pad].iter().copied());
+            output.extend(vec![0.0; output_pad].iter().copied());
+        }
+
+        let output_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
             TensorData::new(
-                data.iter().map(|(input, _)| input.iter()).flatten().copied().collect(),
-                [1, data.len(), INPUT_PARAMS],
+                output,
+                [data.len(), max_seq_len, OUTPUT_PARAMS],
             ),
             &self.brain.device,
         );
 
-        let output_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
+        let input_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
             TensorData::new(
-                data.iter().map(|(_, output)| output.iter()).flatten().copied().collect(),
-                [1, data.len(), OUTPUT_PARAMS],
+                input,
+                [data.len(), max_seq_len, INPUT_PARAMS],
             ),
             &self.brain.device,
         );

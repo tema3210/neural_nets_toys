@@ -76,63 +76,69 @@ pub fn decode_action(action: &[f64; OUTPUT_PARAMS]) -> Decoded {
 }
 
 //TODO: make it to return a tensor
-pub fn form_training_data<'i>(
-    data: impl Iterator<Item = &'i Experience>,
-    reward_at_timestamp: &impl Fn(f64) -> f64,
+pub fn form_training_data<'i, F>(
+    data: impl Iterator<Item = &'i [Experience]>,
+    reward_fab: impl Fn(&'i [Experience]) -> F,
     agent_state: [f64; INPUT_PARAMS],
-) -> Vec<([f64; INPUT_PARAMS], [f64; OUTPUT_PARAMS])> {
-    data.filter_map(|x| {
-        // Calculate reward
-        let base_reward = reward_at_timestamp(x.timestamp) - 0.5;
+) -> Vec<Vec<([f64; INPUT_PARAMS], [f64; OUTPUT_PARAMS])>> 
+where
+    F: Fn(f64) -> f64
+{
+    data.map(|data| {
+        let reward_at_timestamp = reward_fab(data);
+        data.into_iter().filter_map(|x| {
+            // Calculate reward
+            let base_reward = reward_at_timestamp(x.timestamp) - 0.5;
 
-        let fuel_eff = x.fuel / 100.0; // fuel expended, %
+            let fuel_eff = x.fuel / 100.0; // fuel expended, %
 
-        let (state, action) = match &x.event {
-            RlEvent::Action { state, action } => (state, action),
-            RlEvent::End {
-                reason,
-                rewards_collected,
-            } => {
-                let action = [0.0; OUTPUT_PARAMS]; // at the end we don't move
-                let state = agent_state; // state at the end is the same as the last state
-                let reward = match reason {
-                    EndReason::OutOfBounds => -1.0,
-                    EndReason::OutOfFuel => *rewards_collected as f64 * 0.5,
-                    EndReason::ManualReset => 0.0,
-                };
-                return Some((state, action, reward, x.timestamp));
-            }
-            _ => return None,
-        };
+            let (state, action) = match &x.event {
+                RlEvent::Action { state, action } => (state, action),
+                RlEvent::End {
+                    reason,
+                    rewards_collected,
+                } => {
+                    let action = [0.0; OUTPUT_PARAMS]; // at the end we don't move
+                    let state = agent_state; // state at the end is the same as the last state
+                    let reward = match reason {
+                        EndReason::OutOfBounds => -1.0,
+                        EndReason::OutOfFuel => *rewards_collected as f64 * 0.5,
+                        EndReason::ManualReset => 0.0,
+                    };
+                    return Some((state, action, reward, x.timestamp));
+                }
+                _ => return None,
+            };
 
-        let combined_reward = if base_reward > 0.0 {
-            base_reward * (1.0 + fuel_eff) // Up to 2x reward when fuel is 100%
-        } else {
-            base_reward // Keep negative feedback unchanged
-        };
+            let combined_reward = if base_reward > 0.0 {
+                base_reward * (1.0 + fuel_eff) // Up to 2x reward when fuel is 100%
+            } else {
+                base_reward // Keep negative feedback unchanged
+            };
 
-        Some((*state, *action, combined_reward, x.timestamp))
-    })
-    .fold(
-        vec![], // training data
-        |mut data, (state, action, reward, _at)| {
-            // 0, 1 -> left, right; 2, 3 -> up, down
-            let mut new_action = [0.0; OUTPUT_PARAMS];
-            // Scale action by reward
-            for i in 0..OUTPUT_PARAMS {
-                new_action[i] = action[i] as f64 * reward.abs();
-            }
+            Some((*state, *action, combined_reward, x.timestamp))
+        })
+        .fold(
+            vec![], // training data
+            |mut data, (state, action, reward, _at)| {
+                // 0, 1 -> left, right; 2, 3 -> up, down
+                let mut new_action = [0.0; OUTPUT_PARAMS];
+                // Scale action by reward
+                for i in 0..OUTPUT_PARAMS {
+                    new_action[i] = action[i] as f64 * reward.abs();
+                }
 
-            // inverse target movement if reward is negative
-            if reward < 0.005 {
-                new_action.swap(0, 1);
-                new_action.swap(2, 3);
-            }
+                // inverse target movement if reward is negative
+                if reward < 0.005 {
+                    new_action.swap(0, 1);
+                    new_action.swap(2, 3);
+                }
 
-            data.push((state, new_action));
-            data
-        },
-    )
+                data.push((state, new_action));
+                data
+            },
+        )
+    }).collect()
 }
 
 pub fn new_round(

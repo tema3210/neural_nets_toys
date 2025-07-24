@@ -379,25 +379,26 @@ fn training_system(
         commands.run_system(tr_sys.new_round);
         return;
     }
+
+    // Extract all experiences from current episode and history
+    let get_exprt_iter = || {
+        let TrainingState { 
+            episode_histories, 
+            current_episode, .. 
+        } = &*training_state;
+        episode_histories.iter()
+            .map(|x| &x[..])
+            .chain(std::iter::once(&current_episode[..]))
+    };
     
     //this one is assumed to be singular
     for (mut agent,_) in agents.iter_mut() {
 
-        // Extract all experiences from current episode and history
-        let get_exprt_iter = || {
-            let TrainingState { 
-                episode_histories, 
-                current_episode, .. 
-            } = &*training_state;
-            current_episode.iter()
-                // .chain(episode_histories.iter().flat_map(|x| x.iter()))
-        };
-
         let agent_state = agent.encode();
 
         // Reward interpolation function
-        let reward_at_timestamp = {
-            let exprs: Vec<(f64,f64)> = get_exprt_iter()
+        let reward_at_fab = |exprs: &[Experience]| {
+            let exprs: Vec<(f64,f64)> = exprs.iter()
             .filter_map(|x| match x.event {
                 RlEvent::Reward => Some((x.timestamp, 1.0)),
                 RlEvent::Collision => Some((x.timestamp, -1.0)),
@@ -433,14 +434,12 @@ fn training_system(
             }
         };
 
-        let training_data = crate::utils::form_training_data(
-            get_exprt_iter(),
-            &reward_at_timestamp,
-            agent_state
-        );
-        
         // Turbo sleep - this is the training
-        agent.sleep(&training_data[..])
+        agent.sleep(&crate::utils::form_training_data(
+            get_exprt_iter(),
+            &reward_at_fab,
+            agent_state
+        ))
     }
     // Clear current episode
     let episode = std::mem::take(&mut training_state.current_episode);
