@@ -386,7 +386,7 @@ fn training_system(
         // Extract all experiences from current episode and history
         let get_exprt_iter = || {
             let TrainingState { 
-                // episode_histories, 
+                episode_histories, 
                 current_episode, .. 
             } = &*training_state;
             current_episode.iter()

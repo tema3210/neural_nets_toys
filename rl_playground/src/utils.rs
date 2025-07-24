@@ -72,11 +72,10 @@ pub fn decode_action(action: &[f64; OUTPUT_PARAMS]) -> Decoded {
         (action[2] - action[3]) as f32, // Up vs Down
     );
 
-    // let movement = Vec2::new(action[0] as f32, action[1] as f32);
-
     Decoded { movement }
 }
 
+//TODO: make it to return a tensor
 pub fn form_training_data<'i>(
     data: impl Iterator<Item = &'i Experience>,
     reward_at_timestamp: &impl Fn(f64) -> f64,

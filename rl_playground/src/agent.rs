@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use burn::{
-    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{loss::{MseLoss, Reduction}, Linear, LinearConfig}, optim::{AdamConfig, GradientsParams, Optimizer, SimpleOptimizer}, tensor::{activation::*, backend::Backend, Tensor, TensorData}
+    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{gru::{Gru, GruConfig}, loss::{MseLoss, Reduction}, Linear, LinearConfig, Lstm, LstmConfig, LstmState}, optim::{AdamConfig, GradientsParams, Optimizer}, tensor::{activation::*, backend::Backend, Tensor, TensorData}
 };
 use crate::{MyAutodiffBackend};
 
@@ -17,51 +17,54 @@ pub const OUTPUT_PARAMS: usize = 4;
 #[derive(Module, Debug)]
 pub struct Model<B: Backend> {
     inp: Linear<B>,
-    // inner: Lstm<B> ,
+    inner: Lstm<B>,
     out: Linear<B>,
     // activation: ReLU,
+
+}
+
+impl Model<MyAutodiffBackend> {
+    pub fn new(device: &<Autodiff<burn_fusion::Fusion<burn::backend::wgpu::CubeBackend<WgpuRuntime, f32, i32, u32>>> as Backend>::Device) -> Self {
+        let linear1 = LinearConfig::new(INPUT_PARAMS, 32).init(device);
+        let lstm = LstmConfig::new(32, 32, true).init(device);
+        let linear2 = LinearConfig::new(32, OUTPUT_PARAMS).init(device);
+        Self {
+            inp: linear1,
+            inner: lstm,
+            out: linear2,
+        }
+    }
+
+    /// input: batch_size, seq_l, INPUT_PARAMS;
+    /// 
+    /// output: batch_size, seq_l, OUTPUT_PARAMS;
+    pub fn forward(&mut self, input: Tensor<MyAutodiffBackend, 3>, inner_state: &mut Option<LstmState<MyAutodiffBackend, 2>>) -> Tensor<MyAutodiffBackend, 3> {
+        let x = self.inp.forward(input);
+        let x = relu(x);
+        let (x, st) = self.inner.forward(x, inner_state.take());
+        *inner_state = Some(st);
+        let x = self.out.forward(x);
+        relu(x)
+    }
 }
 
 unsafe impl<B: Backend> Sync for Model<B> where B: Sync {}
 
 unsafe impl<B: Backend> Send for Model<B> where B: Send {}
 
-impl Model<MyAutodiffBackend> {
-    pub fn new(device: &<Autodiff<burn_fusion::Fusion<burn::backend::wgpu::CubeBackend<WgpuRuntime, f32, i32, u32>>> as Backend>::Device) -> Self {
-        let linear1 = LinearConfig::new(INPUT_PARAMS, 32).init(device);
-        // let lstm = LstmConfig::new(32, 32, true).init(device);
-        let linear2 = LinearConfig::new(32, OUTPUT_PARAMS).init(device);
-        Self {
-            inp: linear1,
-            // inner: lstm,
-            out: linear2,
-        }
-    }
-
-    pub fn forward(&self, input: Tensor<MyAutodiffBackend, 2>) -> Tensor<MyAutodiffBackend, 2> {
-        let x = self.inp.forward(input);
-        let x = relu(x);
-        // let (x, st) = self.inner.forward(x, brain.memory);
-        // brain.memory = Some(st);
-        let x = self.out.forward(x);
-        relu(x)
-    }
-}
-
 // Neural network brain for the agent
 pub struct AgentBrain {
     model: Option<Model<MyAutodiffBackend>>,
-    // optimizer: burn::optim::Adam,
     device: <MyAutodiffBackend as Backend>::Device,
 
-    // memory: Option<LstmState<MyAutodiffBackend, 2>>,
+    memory: Option<LstmState<MyAutodiffBackend, 2>>,
 }
 
 impl AgentBrain {
     pub fn new(device: &<MyAutodiffBackend as Backend>::Device) -> Self {
         let model = Model::new(device);
         // let optimizer = burn::optim::Adam::new(&model);
-        Self { model: Some(model), device: device.clone() }
+        Self { model: Some(model), device: device.clone(), memory: None }
     }
 
     pub fn reset(&mut self) {
@@ -72,17 +75,17 @@ impl AgentBrain {
     pub fn forward(&mut self, input: &[f64; INPUT_PARAMS]) -> [f64; OUTPUT_PARAMS] {
         let input_data = TensorData::new(
             input.to_vec(),
-            [1, INPUT_PARAMS],
+            [1, 1, INPUT_PARAMS],
         );
-        let input_tensor = Tensor::<MyAutodiffBackend, 2>::from_data(input_data, &self.device)
-            .reshape([1, INPUT_PARAMS]);
+        let input_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(input_data, &self.device)
+            .reshape([1, 1, INPUT_PARAMS]);
 
         // Forward pass through the neural network
-        let Some(model) = self.model.take() else {
+        let Some(mut model) = self.model.take() else {
             panic!("Impossible! F")
         };
 
-        let output = model.forward(input_tensor);
+        let output = model.forward(input_tensor, &mut self.memory);
 
         self.model = Some(model);
 
@@ -91,17 +94,16 @@ impl AgentBrain {
         result
     }
 
-    ///TODO: finish / review
     pub fn train<O: Optimizer<Model<MyAutodiffBackend>, MyAutodiffBackend>>(
         &mut self,
-        input: Tensor<MyAutodiffBackend, 2>,
-        target: Tensor<MyAutodiffBackend, 2>,
+        input: Tensor<MyAutodiffBackend, 3>,
+        target: Tensor<MyAutodiffBackend, 3>,
         optimizer: &mut O
     ) {
         let Some(mut model) = self.model.take() else {
             panic!("Impossible! B")
         };
-        let output = model.forward(input.clone());
+        let output = model.forward(input.clone(), &mut self.memory);
         let loss = MseLoss::new().forward(output, target, Reduction::Mean);
         // let grad = loss.forward_no_reduction(output, target);
         let grads = loss.backward();
@@ -201,18 +203,18 @@ impl Agent {
 
         // let mut optimizer_state: Option<_> = None;
 
-        let input_tensor = Tensor::<MyAutodiffBackend, 2>::from_data(
+        let input_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
             TensorData::new(
                 data.iter().map(|(input, _)| input.iter()).flatten().copied().collect(),
-                [data.len(), INPUT_PARAMS],
+                [1, data.len(), INPUT_PARAMS],
             ),
             &self.brain.device,
         );
 
-        let output_tensor = Tensor::<MyAutodiffBackend, 2>::from_data(
+        let output_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
             TensorData::new(
                 data.iter().map(|(_, output)| output.iter()).flatten().copied().collect(),
-                [data.len(), OUTPUT_PARAMS],
+                [1, data.len(), OUTPUT_PARAMS],
             ),
             &self.brain.device,
         );
