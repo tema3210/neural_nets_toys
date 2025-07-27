@@ -217,45 +217,35 @@ impl Agent {
         let optimizer = AdamConfig::new();
         let mut optimizer = optimizer.init();
 
-        // let mut optimizer_state: Option<_> = None;
-
-        let max_seq_len = data.iter().map(|x| x.len()).max().unwrap_or(0);
-        // Prepare input and output tensors
-        // input: batch_size, seq_l, INPUT_PARAMS;
-        // output: batch_size, seq_l, OUTPUT_PARAMS;
-
-        let mut input = vec![];
-        let mut output = vec![];
-
         for (_, story) in data.iter().enumerate() {
+            let mut input = vec![];
+            let mut output = vec![];
+
+            let entries = story.len();
+
             for (input_data, output_data) in story.iter() {
                 input.extend(input_data.iter().copied());
                 output.extend(output_data.iter().copied());
             }
-            let input_pad = (max_seq_len - story.len() ) * INPUT_PARAMS;
-            let output_pad = (max_seq_len - story.len() ) * OUTPUT_PARAMS;
 
-            input.extend(vec![0.0; input_pad].iter().copied());
-            output.extend(vec![0.0; output_pad].iter().copied());
+            let input_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
+                TensorData::new(
+                    input,
+                    [1, entries, INPUT_PARAMS],
+                ),
+                &self.brain.device,
+            );
+
+            let output_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
+                TensorData::new(
+                    output,
+                    [1, entries, OUTPUT_PARAMS],
+                ),
+                &self.brain.device,
+            );
+
+            self.brain.train(input_tensor, output_tensor, &mut optimizer);
+
         }
-
-        let output_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
-            TensorData::new(
-                output,
-                [data.len(), max_seq_len, OUTPUT_PARAMS],
-            ),
-            &self.brain.device,
-        );
-
-        let input_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
-            TensorData::new(
-                input,
-                [data.len(), max_seq_len, INPUT_PARAMS],
-            ),
-            &self.brain.device,
-        );
-
-        self.brain.train(input_tensor, output_tensor, &mut optimizer);
-        
     }
 }
