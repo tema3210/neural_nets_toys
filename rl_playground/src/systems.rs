@@ -1,27 +1,28 @@
 use crate::{agent::AGENT_SIZE, utils::spawn_reward, EndRoundEvent, EnvironmentConfig, RlEvent, Experience, Obstacle, Reward, TrainingState};
-use rand::prelude::*;
+// use rand::prelude::*;
 
 use super::agent::Agent;
 use bevy::prelude::*;
+use burn::tensor::backend::AutodiffBackend;
 
-const PROB_OF_REWARD_DETECT: f64 = 0.33;
+// const PROB_OF_REWARD_DETECT: f64 = 0.33;
 
-pub struct RNG(rand::distributions::Bernoulli, rand::rngs::StdRng);
+// pub struct RNG(rand::distributions::Bernoulli, rand::rngs::StdRng);
 
-impl Default for RNG {
-  fn default() -> Self {
-      Self(
-        rand::distributions::Bernoulli::new(PROB_OF_REWARD_DETECT).unwrap(),
-        rand::rngs::StdRng::from_entropy(),
-      )
-  }
-}
+// impl Default for RNG {
+//   fn default() -> Self {
+//       Self(
+//         rand::distributions::Bernoulli::new(PROB_OF_REWARD_DETECT).unwrap(),
+//         rand::rngs::StdRng::from_entropy(),
+//       )
+//   }
+// }
 
-pub fn agent_sensing(
-  mut agents: Query<(&mut Agent, &Transform)>,
+pub fn agent_sensing<B: AutodiffBackend>(
+  mut agents: Query<(&mut Agent<B>, &Transform)>,
   obstacles: Query<&Transform, With<Obstacle>>,
   rewards: Query<&Transform, With<Reward>>,
-  mut rng: Local<RNG>,
+  // mut rng: Local<RNG>,
 ) {
   for (mut agent, agent_transform) in agents.iter_mut() {
       let agent_pos = agent_transform.translation.truncate();
@@ -55,12 +56,13 @@ pub fn agent_sensing(
               // Check if reward is in this direction
               let dot = direction.dot(to_reward.normalize());
               if dot > 0.7 {  // Within ~45 degrees of ray direction
-                  let RNG(ref dst, ref mut rng) = *rng;
-                  if dst.sample(rng) {
-                    rew_found += 1;
-                    let dist = to_reward.length(); //also normalized
-                    reward_distance = reward_distance.min(dist as f64);
-                  }
+                  rew_found += 1;
+                  let dist = to_reward.length(); //also normalized
+                  reward_distance = reward_distance.min(dist as f64);
+                  // let RNG(ref dst, ref mut rng) = *rng;
+                  // if dst.sample(rng) {
+                    
+                  // }
               }
           }
 
@@ -76,8 +78,8 @@ pub struct Decoded {
   pub movement: Vec2,
 }
 
-pub fn agent_thinking(
-  mut agents: Query<(&mut Agent, &mut Transform)>,
+pub fn agent_thinking<B: AutodiffBackend>(
+  mut agents: Query<(&mut Agent<B>, &mut Transform)>,
   mut training: ResMut<TrainingState>,
   mut ew: EventWriter<EndRoundEvent>,
   cfg: Res<EnvironmentConfig>,
@@ -126,8 +128,8 @@ pub fn agent_thinking(
   }
 }
 
-pub fn collision_detection(
-  agents: Query<(&Agent, &Transform)>,
+pub fn collision_detection<B: AutodiffBackend>(
+  agents: Query<(&Agent<B>, &Transform)>,
   obstacles: Query<&Transform, With<Obstacle>>,
   config: Res<EnvironmentConfig>,
   mut training: ResMut<TrainingState>,
@@ -169,9 +171,9 @@ pub fn collision_detection(
   }
 }
 
-pub fn reward_collection(
+pub fn reward_collection<B: AutodiffBackend>(
   mut commands: Commands,
-  mut agents: Query<(&mut Agent, &Transform)>,
+  mut agents: Query<(&mut Agent<B>, &Transform)>,
   rewards: Query<(Entity, &Transform), With<Reward>>,
   config: Res<EnvironmentConfig>, 
   mut training: ResMut<TrainingState>,

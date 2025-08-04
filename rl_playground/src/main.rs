@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 // use neural_nets_toys::{train, TrainParams};
 
+use burn::tensor::backend::AutodiffBackend;
 use burn::{
     backend::{Autodiff, Wgpu},
     tensor::backend::Backend,
@@ -27,8 +28,9 @@ pub type MyBackend = Wgpu;
 pub type MyAutodiffBackend = Autodiff<MyBackend>;
 
 #[derive(Resource)]
-struct Device {
-    device: <MyAutodiffBackend as Backend>::Device,
+struct Device<B: AutodiffBackend>
+where B::Device: Default {
+    device: <B as Backend>::Device,
 }
 
 #[derive(Resource)]
@@ -80,9 +82,9 @@ mod app_ui {
     }
 
 
-    pub fn update_training_ui(
+    pub fn update_training_ui<B: AutodiffBackend>(
         training_state: Res<TrainingState>,
-        agents: Query<&Agent>,
+        agents: Query<&Agent<B>>,
         mut text_query: Query<&mut Text, With<TrainingInfoText>>,
     ) {
         if let Ok(mut text) = text_query.single_mut() {
@@ -111,7 +113,7 @@ fn setup_environment(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    device: Res<Device>,
+    device: Res<Device<MyAutodiffBackend>>,
 ) {
     let plane_z_level = -0.5;
 
@@ -121,7 +123,7 @@ fn setup_environment(
 
     // Spawn agent
     commands.spawn((
-        Agent::new("John".to_string(),_config.sight_distance, &device.device),
+        Agent::<MyAutodiffBackend>::new("John".to_string(),_config.sight_distance, &device.device),
         Mesh3d(meshes.add(Cuboid::new(
             agent::AGENT_SIZE,
             agent::AGENT_SIZE,
@@ -248,20 +250,20 @@ impl Plugin for RLPlugin {
             })
             .insert_resource(TrainingState::default())
             .init_resource::<UtilSystems>()
-            .insert_resource(Device {
-                device: <MyAutodiffBackend as Backend>::Device::default(),
+            .insert_resource(Device::<MyAutodiffBackend> {
+                device: Default::default(),
             })
 
             // .add_event::<ResetSimulationEvent>()
             .add_event::<EndRoundEvent>() // Register the reset event
             .add_systems(Startup, (setup_environment,app_ui::setup_ui))
             .add_systems(Update, (
-                systems::agent_sensing,
-                systems::agent_thinking,
-                systems::collision_detection,
-                systems::reward_collection,
-                training_system,
-                app_ui::update_training_ui,
+                systems::agent_sensing::<MyAutodiffBackend>,
+                systems::agent_thinking::<MyAutodiffBackend>,
+                systems::collision_detection::<MyAutodiffBackend>,
+                systems::reward_collection::<MyAutodiffBackend>,
+                training_system::<MyAutodiffBackend>,
+                app_ui::update_training_ui::<MyAutodiffBackend>,
                 // reset_simulation, // Add our reset system
             ));
     }
@@ -340,13 +342,13 @@ pub struct TrainingState {
     pub current_episode: Vec<Experience>,
 }
 
-fn training_system(
+fn training_system<B: AutodiffBackend>(
     mut commands: Commands,
     tr_sys: Res<UtilSystems>,
 
     mut training_state: ResMut<TrainingState>,
     env_config: Res<EnvironmentConfig>,
-    mut agents: Query<(&mut Agent,&mut Transform)>,
+    mut agents: Query<(&mut Agent<B>, &mut Transform)>,
 
     mut retry_count: Local<usize>,
     // mut reset_writer: EventWriter<ResetSimulationEvent>,

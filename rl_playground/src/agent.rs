@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use burn::{
-    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{attention::{MultiHeadAttention, MultiHeadAttentionConfig}, gru::{Gru, GruConfig}, loss::{MseLoss, Reduction}, Linear, LinearConfig, Lstm, LstmConfig, LstmState}, optim::{AdamConfig, GradientsParams, Optimizer}, tensor::{activation::*, backend::Backend, Tensor, TensorData}
+    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{attention::{MultiHeadAttention, MultiHeadAttentionConfig}, gru::{Gru, GruConfig}, loss::{MseLoss, Reduction}, Linear, LinearConfig, Lstm, LstmConfig, LstmState}, optim::{AdamConfig, GradientsParams, Optimizer}, tensor::{activation::*, backend::{AutodiffBackend, Backend}, Tensor, TensorData}
 };
 use crate::{MyAutodiffBackend};
 
@@ -27,8 +27,10 @@ pub struct Model<B: Backend> {
 
 }
 
-impl Model<MyAutodiffBackend> {
-    pub fn new(device: &<Autodiff<burn_fusion::Fusion<burn::backend::wgpu::CubeBackend<WgpuRuntime, f32, i32, u32>>> as Backend>::Device) -> Self {
+impl<B> Model<B> 
+    where B: AutodiffBackend
+{    
+    pub fn new(device: &<B as Backend>::Device) -> Self {
         Self {
             inp: LinearConfig::new(INPUT_PARAMS, 32).init(device),
             prefix: LinearConfig::new(32, 16).init(device),
@@ -43,7 +45,7 @@ impl Model<MyAutodiffBackend> {
     /// input: batch_size, seq_l, INPUT_PARAMS;
     /// 
     /// output: batch_size, seq_l, OUTPUT_PARAMS;
-    pub fn forward(&mut self, input: Tensor<MyAutodiffBackend, 3>, brain: &mut AgentBrain) -> Tensor<MyAutodiffBackend, 3> {
+    pub fn forward(&mut self, input: Tensor<B, 3>, brain: &mut AgentBrain<B>) -> Tensor<B, 3> {
         let x = self.inp.forward(input);
         let x = relu(x);
         let x = self.prefix.forward(x);
@@ -68,16 +70,16 @@ unsafe impl<B: Backend> Sync for Model<B> where B: Sync {}
 unsafe impl<B: Backend> Send for Model<B> where B: Send {}
 
 // Neural network brain for the agent
-pub struct AgentBrain {
-    model: Option<Model<MyAutodiffBackend>>,
-    device: <MyAutodiffBackend as Backend>::Device,
+pub struct AgentBrain<B: Backend> {
+    model: Option<Model<B>>,
+    device: <B as Backend>::Device,
 
-    mem1: Option<LstmState<MyAutodiffBackend, 2>>,
-    mem2: Option<LstmState<MyAutodiffBackend, 2>>,
+    mem1: Option<LstmState<B, 2>>,
+    mem2: Option<LstmState<B, 2>>,
 }
 
-impl AgentBrain {
-    pub fn new(device: &<MyAutodiffBackend as Backend>::Device) -> Self {
+impl<B: AutodiffBackend> AgentBrain<B> {
+    pub fn new(device: &<B as Backend>::Device) -> Self {
         let model = Model::new(device);
         // let optimizer = burn::optim::Adam::new(&model);
         Self { model: Some(model), device: device.clone(), mem1: None, mem2: None }
@@ -93,7 +95,7 @@ impl AgentBrain {
             input.to_vec(),
             [1, 1, INPUT_PARAMS],
         );
-        let input_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(input_data, &self.device)
+        let input_tensor = Tensor::<B, 3>::from_data(input_data, &self.device)
             .reshape([1, 1, INPUT_PARAMS]);
 
         // Forward pass through the neural network
@@ -110,10 +112,10 @@ impl AgentBrain {
         result
     }
 
-    pub fn train<O: Optimizer<Model<MyAutodiffBackend>, MyAutodiffBackend>>(
+    pub fn train<O: Optimizer<Model<B>, B>>(
         &mut self,
-        input: Tensor<MyAutodiffBackend, 3>,
-        target: Tensor<MyAutodiffBackend, 3>,
+        input: Tensor<B, 3>,
+        target: Tensor<B, 3>,
         optimizer: &mut O
     ) {
         let Some(mut model) = self.model.take() else {
@@ -135,11 +137,11 @@ impl AgentBrain {
 
 // Agent component
 #[derive(Component)]
-pub struct Agent {
+pub struct Agent<B: Backend> {
     pub name: String,
     pub sight_distance: f32,
 
-    pub brain: AgentBrain,
+    pub brain: AgentBrain<B>,
     // Neural network brain
     pub legs: Vec2,
     // Movement direction
@@ -150,7 +152,7 @@ pub struct Agent {
     pub sensors: [[f64; 2]; 8], // 8 directional sensors
 }
 
-impl Agent {
+impl<B: AutodiffBackend> Agent<B> {
     pub fn reset(&mut self) {
         self.fuel = 100.0;
         self.rewards = 0;
@@ -159,11 +161,11 @@ impl Agent {
         self.legs = Vec2::ZERO;
     }
 
-    pub fn new(name: String, sight_distance: f32, device: &<MyAutodiffBackend as Backend>::Device) -> Self {
+    pub fn new(name: String, sight_distance: f32, device: &<B as Backend>::Device) -> Self {
         Self {
             sight_distance,
             name,
-            brain: AgentBrain::new(&device),
+            brain: AgentBrain::new(device),
             sensors: [[0.0; 2]; 8],
             fuel: 100.0,
             rewards: 0,
@@ -228,7 +230,7 @@ impl Agent {
                 output.extend(output_data.iter().copied());
             }
 
-            let input_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
+            let input_tensor = Tensor::<B, 3>::from_data(
                 TensorData::new(
                     input,
                     [1, entries, INPUT_PARAMS],
@@ -236,7 +238,7 @@ impl Agent {
                 &self.brain.device,
             );
 
-            let output_tensor = Tensor::<MyAutodiffBackend, 3>::from_data(
+            let output_tensor = Tensor::<B, 3>::from_data(
                 TensorData::new(
                     output,
                     [1, entries, OUTPUT_PARAMS],
