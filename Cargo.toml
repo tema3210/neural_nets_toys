@@ -1,3 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["rl_playground"]
+members = ["llm","rl_playground"]
+
+[workspace.dependencies]
+burn = { version = "0.18.0", features = ["wgpu", "train"] }

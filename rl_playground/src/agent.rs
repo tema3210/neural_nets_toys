@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 use burn::{
-    backend::{wgpu::WgpuRuntime, Autodiff}, module::Module, nn::{attention::{MultiHeadAttention, MultiHeadAttentionConfig}, gru::{Gru, GruConfig}, loss::{MseLoss, Reduction}, Linear, LinearConfig, Lstm, LstmConfig, LstmState}, optim::{AdamConfig, GradientsParams, Optimizer}, tensor::{activation::*, backend::{AutodiffBackend, Backend}, Tensor, TensorData}
+    module::Module, nn::{attention::{MultiHeadAttention, MultiHeadAttentionConfig}, gru::{Gru, GruConfig}, loss::{MseLoss, Reduction}, Linear, LinearConfig, Lstm, LstmConfig, LstmState}, optim::{AdamConfig, GradientsParams, Optimizer}, tensor::{activation::*, backend::{AutodiffBackend, Backend}, Tensor, TensorData}
 };
-use crate::{MyAutodiffBackend};
 
 pub const AGENT_SIZE: f32 = 2.0;
 
