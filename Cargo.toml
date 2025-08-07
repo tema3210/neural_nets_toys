@@ -4,3 +4,4 @@ members = ["llm","rl_playground"]
 
 [workspace.dependencies]
 burn = { version = "0.18.0", features = ["wgpu", "train"] }
+serde = { version = "1.0", features = ["derive"] }
